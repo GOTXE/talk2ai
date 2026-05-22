@@ -5,6 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![Wayland](https://img.shields.io/badge/Wayland-compatible-00ADEF?logo=wayland&logoColor=white)
 ![X11](https://img.shields.io/badge/X11-compatible-F05032?logo=x.org&logoColor=white)
+[![Handy](https://img.shields.io/badge/Handy-STT_local-FF6B6B?logo=microphone&logoColor=white)](https://handy.computer)
 [![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-driver_por_defecto-4285F4?logo=google&logoColor=white)](https://github.com/google-gemini/gemini-cli)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue?logo=gnu&logoColor=white)
 
@@ -18,7 +19,7 @@ Asistente de voz para Linux con dos modos de uso: **dictado** (tu voz → texto 
 
 ## Demo
 
-<video src="https://github.com/GOTXE/talk2ai/releases/download/v1.0.0/demo.webm" controls width="100%"></video>
+![demo](assets/demo.gif)
 
 ## Modos de uso
 
@@ -197,10 +198,8 @@ espeak-ng "prueba"        # verificar audio
 
 ## Licencia
 
-Copyright (C) 2026 gotxe
+GPL-3.0 — ver [LICENSE](LICENSE).
 
-Este programa es software libre: puedes redistribuirlo y/o modificarlo bajo los términos de la **GNU General Public License** publicada por la Free Software Foundation, ya sea la versión 3 de la Licencia, o (a tu elección) cualquier versión posterior.
+---
 
-Este programa se distribuye con la esperanza de que sea útil, pero **SIN NINGUNA GARANTÍA**; sin siquiera la garantía implícita de **COMERCIABILIDAD** o **APTITUD PARA UN PROPÓSITO PARTICULAR**. Consulta la GNU General Public License para más detalles.
-
-Deberías haber recibido una copia de la GNU General Public License junto con este programa. Si no es así, visita <https://www.gnu.org/licenses/>.
+Hecho con ❤️ por [GOTXE](https://github.com/GOTXE) e IA
