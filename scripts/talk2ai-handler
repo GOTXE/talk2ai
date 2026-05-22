@@ -1,0 +1,36 @@
+#!/bin/bash
+# Llamado por Handy (salida "script externo") con $1 = texto transcrito.
+# Solo gestiona modo DICTADO — el modo IA lo gestiona talk2ai-daemon (polling).
+# Debe salir lo antes posible para no bloquear ni crashear Handy.
+
+TRANSCRIPTION="$1"
+[ -z "${TRANSCRIPTION// }" ] && exit 0
+
+TALK2AI_DIR="$HOME/.talk2ai"
+MODE_FILE="$TALK2AI_DIR/mode"
+
+MODE=$(cat "$MODE_FILE" 2>/dev/null || echo "ai")
+[ "$MODE" != "dictate" ] && exit 0
+
+# Garantizar XDG_RUNTIME_DIR y YDOTOOL_SOCKET aunque Handy (AppImage) no los exporte
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-${XDG_RUNTIME_DIR}/.ydotool_socket}"
+
+DEBUG_FILE="$TALK2AI_DIR/debug"
+DEBUG_LOG="$TALK2AI_DIR/debug.log"
+if [ -f "$DEBUG_FILE" ]; then
+    _TS=$(date +%s%3N)
+    printf '%s|D|%s\n' "$_TS" "$TRANSCRIPTION" >> "$DEBUG_LOG"
+fi
+
+if [ -S "$YDOTOOL_SOCKET" ] && command -v ydotool &>/dev/null; then
+    # Salir inmediatamente para liberar a Handy; ydotool type 0.5s después
+    # (el handler está desacoplado con </dev/null para que Handy no espere los fd)
+    (
+        sleep 0.5
+        timeout 5 ydotool type --key-delay 12 -- "$TRANSCRIPTION"
+    ) </dev/null >/dev/null 2>/dev/null &
+    disown
+else
+    xdotool type --clearmodifiers --delay 20 "$TRANSCRIPTION"
+fi

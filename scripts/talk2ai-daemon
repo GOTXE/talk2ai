@@ -1,0 +1,268 @@
+#!/bin/bash
+# Supervisor + polling IA.
+# El modo dictado lo gestiona talk2ai-handler (script externo de Handy).
+
+HANDY_DB="$HOME/.local/share/com.pais.handy/history.db"
+TALK2AI_DIR="$HOME/.talk2ai"
+MODE_FILE="$TALK2AI_DIR/mode"
+DRIVER_FILE="$TALK2AI_DIR/driver"
+MODEL_FILE="$TALK2AI_DIR/model"
+STATE_FILE="$TALK2AI_DIR/ai-state"
+DEBUG_FILE="$TALK2AI_DIR/debug"
+DEBUG_LOG="$TALK2AI_DIR/debug.log"
+ERROR_LOG="$TALK2AI_DIR/errors.log"
+VOICE_PROMPT="$TALK2AI_DIR/voice-prompt.md"
+LAST_ID=0
+LANGUAGE="es"
+AI_MODEL="gemini-2.5-flash-lite"
+
+ERROR_MESSAGES=(
+    "Vaya, algún bit se ha perdido y la respuesta no existe"
+    "Ups, parece que los electrones se han ido de vacaciones"
+    "Lo siento, el asistente se ha tomado un café y no ha vuelto"
+    "Misteriosamente la respuesta ha desaparecido en el éter digital"
+)
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+_speak() {
+    local text="$1"
+    local ssml
+    ssml=$(printf '%s' "$text" | sed 's/Stephen Hawking/<lang xml:lang="en">Stephen Hawking<\/lang>/gi')
+    espeak-ng -v "$LANGUAGE" -m -s 140 -p 40 "$ssml" 2>/dev/null
+}
+
+_init_talk2ai() {
+    mkdir -p "$TALK2AI_DIR/ia" "$TALK2AI_DIR/context"
+
+    [ -f "$MODE_FILE" ]   || echo "ai"     > "$MODE_FILE"
+    [ -f "$DRIVER_FILE" ] || echo "gemini" > "$DRIVER_FILE"
+
+    local legacy_brief="$HOME/.config/handy-gemini/brief/GEMINI.md"
+    if [ -f "$legacy_brief" ] && [ ! -f "$TALK2AI_DIR/context/gemini.md" ]; then
+        cp "$legacy_brief" "$TALK2AI_DIR/context/gemini.md"
+    fi
+
+    local repo_dir="$HOME/Documentos/Prog_Local/handy-gemini-tts"
+    local repo_driver="$repo_dir/config/ia/gemini"
+    if [ -f "$repo_driver" ]; then
+        cp "$repo_driver" "$TALK2AI_DIR/ia/gemini"
+        chmod +x "$TALK2AI_DIR/ia/gemini"
+    fi
+
+    local repo_vp="$repo_dir/config/voice-prompt.md"
+    if [ ! -f "$VOICE_PROMPT" ] && [ -f "$repo_vp" ]; then
+        cp "$repo_vp" "$VOICE_PROMPT"
+    fi
+
+    echo "$AI_MODEL" > "$MODEL_FILE"
+    echo "idle"          > "$STATE_FILE"
+}
+
+_detect_session_type() {
+    [ "$XDG_SESSION_TYPE" = "wayland" ] && echo "wayland" && return
+    [ -n "$WAYLAND_DISPLAY" ]           && echo "wayland" && return
+    [ -S "/run/user/$(id -u)/wayland-0" ] && echo "wayland" && return
+    if [ -n "$XDG_SESSION_ID" ]; then
+        _t=$(loginctl show-session "$XDG_SESSION_ID" -p Type --value 2>/dev/null)
+        [ "$_t" = "wayland" ] && echo "wayland" && return
+    fi
+    _sid=$(loginctl list-sessions --no-legend 2>/dev/null | awk -v uid="$(id -u)" '$2==uid {print $1; exit}')
+    if [ -n "$_sid" ]; then
+        _t=$(loginctl show-session "$_sid" -p Type --value 2>/dev/null)
+        [ "$_t" = "wayland" ] && echo "wayland" && return
+    fi
+    echo "x11"
+}
+
+_run_driver() {
+    local prompt="$1"
+    local driver
+    driver=$(cat "$DRIVER_FILE" 2>/dev/null || echo "gemini")
+    local driver_script="$TALK2AI_DIR/ia/$driver"
+
+    if [ ! -x "$driver_script" ]; then
+        echo "Driver '$driver' no encontrado o no ejecutable" >&2
+        return 1
+    fi
+
+    local context_file="$TALK2AI_DIR/context/$driver.md"
+    export TALK2AI_MODEL="$AI_MODEL"
+    export TALK2AI_VOICE_PROMPT="$VOICE_PROMPT"
+    export TALK2AI_CONTEXT_FILE=""
+    [ -f "$context_file" ] && export TALK2AI_CONTEXT_FILE="$context_file"
+
+    "$driver_script" "$prompt" 2>"$_err_tmp"
+}
+
+main() {
+    echo -e "${GREEN}═══════════════════════════════════════${NC}"
+    echo -e "${GREEN}   talk2ai daemon${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════${NC}"
+    echo ""
+    echo "🤖 Alt+Super+G  → Modo IA       (polling SQLite)"
+    echo "⌨️  Alt+Super+H  → Modo Dictado  (script externo Handy)"
+    echo "🎙️  Ctrl+Space   → Grabar (PTT)"
+    echo "⏸️  Ctrl+Alt+Q   → Detener audio"
+    echo ""
+
+    _init_talk2ai
+
+    SESSION_TYPE=$(_detect_session_type)
+    if [ "$SESSION_TYPE" = "wayland" ]; then
+        pkill -f "python3.*talk2ai-keys" 2>/dev/null
+        sleep 0.3
+        python3 ~/.local/bin/talk2ai-keys &
+        echo "talk2ai-keys lanzado en Wayland"
+    else
+        export DISPLAY="${DISPLAY:-:0}"
+        XAUTH_FILE=$(ls /run/user/$(id -u)/xauth_* 2>/dev/null | head -1)
+        [ -n "$XAUTH_FILE" ] && export XAUTHORITY="$XAUTH_FILE"
+        pkill xbindkeys 2>/dev/null
+        xbindkeys &
+        echo "xbindkeys lanzado en X11"
+    fi
+
+    if [ ! -f "$HANDY_DB" ]; then
+        echo -e "${RED}❌ BD no encontrada: $HANDY_DB${NC}"
+        return 1
+    fi
+
+    LAST_ID=$(sqlite3 "$HANDY_DB" "SELECT COALESCE(MAX(id), 0) FROM transcription_history" 2>/dev/null || echo "0")
+    LOOP_COUNT=0
+    USE_WAYLAND=false
+    [ "$SESSION_TYPE" = "wayland" ] && USE_WAYLAND=true
+
+    while true; do
+        sleep 1
+
+        # Keepalive talk2ai-keys cada 10s
+        if $USE_WAYLAND && [ $((LOOP_COUNT % 10)) -eq 0 ]; then
+            if ! pgrep -f "python3.*talk2ai-keys" > /dev/null 2>&1; then
+                echo "⚠ talk2ai-keys caído, relanzando..."
+                python3 ~/.local/bin/talk2ai-keys &
+            fi
+        fi
+        LOOP_COUNT=$((LOOP_COUNT + 1))
+
+        result=$(sqlite3 "$HANDY_DB" "SELECT id, transcription_text FROM transcription_history WHERE id > $LAST_ID ORDER BY id DESC LIMIT 1" 2>/dev/null)
+        [ -z "$result" ] && continue
+
+        NEW_ID=$(echo "$result" | cut -d'|' -f1)
+        TRANSCRIPTION=$(echo "$result" | cut -d'|' -f2-)
+        [ -z "$NEW_ID" ] || [ "$NEW_ID" -le "$LAST_ID" ] && continue
+        LAST_ID=$NEW_ID
+
+        # Modo dictado: lo gestiona el script externo de Handy, no el daemon
+        MODE=$(cat "$MODE_FILE" 2>/dev/null || echo "ai")
+        [ "$MODE" = "dictate" ] && continue
+
+        [ -z "${TRANSCRIPTION// }" ] && continue
+
+        echo ""
+        echo -e "${YELLOW}🎤 Dijiste: $TRANSCRIPTION${NC}"
+
+        _T_START=$(date +%s%3N)
+        _T_FIRST_TOKEN=0
+        if [ -f "$DEBUG_FILE" ]; then
+            {
+                echo "$_T_START|SEP|"
+                echo "$_T_START|INFO|Modelo: $AI_MODEL  ·  Driver: $(cat "$DRIVER_FILE" 2>/dev/null || echo "gemini")"
+                echo "$_T_START|Q|$TRANSCRIPTION"
+            } >> "$DEBUG_LOG"
+        fi
+
+        _err_tmp=$(mktemp)
+        echo "processing" > "$STATE_FILE"
+        buffer=""
+        response=""
+        _phrases=()
+        _first_speak=true
+
+        while IFS= read -r line; do
+            _line=$(printf '%s' "$line" | grep -v "Ripgrep\|Falling back\|not available" | sed 's/\*\*//g; s/\*//g; s/__//g; s/_//g; s/#//g')
+            [ -z "$_line" ] && continue
+            if [ "$_T_FIRST_TOKEN" = "0" ]; then
+                _T_FIRST_TOKEN=$(date +%s%3N)
+                [ -f "$DEBUG_FILE" ] && echo "$_T_FIRST_TOKEN|STAT|⚡ Primer token: $(awk "BEGIN{printf \"%.2f\",($_T_FIRST_TOKEN-$_T_START)/1000}")s" >> "$DEBUG_LOG"
+            fi
+            buffer+=" $_line"
+            response+=" $_line"
+            if [[ "$buffer" =~ [.!?:][[:space:]]*$ ]] || [ ${#buffer} -ge 150 ]; then
+                if [ -f "$DEBUG_FILE" ]; then
+                    _phrases+=("${buffer## }")
+                else
+                    if $_first_speak; then _first_speak=false; fi
+                    _speak "${buffer## }" || break
+                fi
+                buffer=""
+            fi
+        done < <(_run_driver "$TRANSCRIPTION")
+
+        [ -n "${buffer## }" ] && _phrases+=("${buffer## }")
+        response="${response## }"
+        _stderr=$(cat "$_err_tmp"); rm -f "$_err_tmp"
+
+        # Extraer enlaces [ENLACE: url] del response antes de hablar
+        _links=()
+        while IFS= read -r _link; do
+            [ -n "$_link" ] && _links+=("$_link")
+        done < <(printf '%s' "$response" | grep -oP '(?<=\[ENLACE:\s)([^\]]+)(?=\])' 2>/dev/null || \
+                 printf '%s' "$response" | grep -o '\[ENLACE:[^]]*\]' | sed 's/\[ENLACE: *//;s/\]//')
+        _response_spoken=$(printf '%s' "$response" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+
+        if [ -n "$response" ]; then
+            echo -e "${GREEN}✅ $response${NC}"
+            if [ -f "$DEBUG_FILE" ]; then
+                _T_END=$(date +%s%3N)
+                {
+                    echo "$_T_END|A|$_response_spoken"
+                    for _l in "${_links[@]}"; do
+                        echo "$_T_END|L|$_l"
+                    done
+                    echo "$_T_END|STAT|✅ Total: $(awk "BEGIN{printf \"%.2f\",($_T_END-$_T_START)/1000}")s  ·  ${#response} chars"
+                } >> "$DEBUG_LOG"
+            fi
+            for _l in "${_links[@]}"; do
+                # Notificación con botón Abrir — se gestiona en subshell desacoplado
+                (
+                    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+                    export DISPLAY="${DISPLAY:-:0}"
+                    export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+                    _clicked=$(notify-send "🔗 Enlace" "$_l" --action="open:Abrir" --wait -t 15000 2>/dev/null)
+                    [ -n "$_clicked" ] && xdg-open "$_l" 2>/dev/null
+                ) </dev/null >/dev/null 2>/dev/null &
+                disown
+            done
+            # Hablar solo el texto sin URLs
+            _phrases_spoken=()
+            for _p in "${_phrases[@]}"; do
+                _ps=$(printf '%s' "$_p" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+                [ -n "$_ps" ] && _phrases_spoken+=("$_ps")
+            done
+            for _phrase in "${_phrases_spoken[@]}"; do
+                _speak "$_phrase"
+            done
+        fi
+
+        echo "idle" > "$STATE_FILE"
+
+        if [ -z "$response" ]; then
+            _rand_msg="${ERROR_MESSAGES[$((RANDOM % ${#ERROR_MESSAGES[@]}))]}"
+            echo -e "${RED}❌ Sin respuesta del driver${NC}"
+            [ -n "$_stderr" ] && echo -e "${RED}   stderr: $_stderr${NC}"
+            {
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')]"
+                echo "  Transcripción: $TRANSCRIPTION"
+                [ -n "$_stderr" ] && echo "  stderr: $_stderr"
+                echo "---"
+            } >> "$ERROR_LOG"
+            _speak "$_rand_msg"
+        fi
+    done
+}
+
+main "$@"

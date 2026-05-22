@@ -1,0 +1,14 @@
+#!/bin/bash
+# Driver: Gemini CLI
+# Contrato: recibe $1=prompt, lee TALK2AI_MODEL / TALK2AI_VOICE_PROMPT / TALK2AI_CONTEXT_FILE
+PROMPT="$1"
+RUNTIME_DIR=$(mktemp -d)
+trap "rm -rf $RUNTIME_DIR" EXIT
+
+{
+    cat "$TALK2AI_VOICE_PROMPT"
+    echo ""
+    [ -n "$TALK2AI_CONTEXT_FILE" ] && [ -f "$TALK2AI_CONTEXT_FILE" ] && cat "$TALK2AI_CONTEXT_FILE"
+} > "$RUNTIME_DIR/GEMINI.md"
+
+(cd "$RUNTIME_DIR" && gemini --model "$TALK2AI_MODEL" --skip-trust -p "$PROMPT")

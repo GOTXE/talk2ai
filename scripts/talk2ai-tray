@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+"""Tray icon para talk2ai."""
+
+import os
+import sys
+import subprocess
+import threading
+from datetime import datetime
+from pathlib import Path
+
+from PyQt6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
+                              QWidget, QVBoxLayout, QHBoxLayout,
+                              QTextEdit, QTextBrowser, QPushButton)
+from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QBrush,
+                         QFont, QAction, QPainterPath, QTransform, QTextCursor,
+                         QRadialGradient, QLinearGradient)
+from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QFileSystemWatcher, QByteArray
+from PyQt6.QtSvg import QSvgRenderer
+
+HANDY_DB           = Path.home() / ".local/share/com.pais.handy/history.db"
+TALK2AI_DIR        = Path.home() / ".talk2ai"
+MODE_FILE          = TALK2AI_DIR / "mode"
+DRIVER_FILE        = TALK2AI_DIR / "driver"
+STATE_FILE         = TALK2AI_DIR / "ai-state"
+DEBUG_ENABLED_FILE = TALK2AI_DIR / "debug"
+DEBUG_LOG_FILE     = TALK2AI_DIR / "debug.log"
+MODEL_FILE         = TALK2AI_DIR / "model"
+SERVICE            = "talk2ai.service"
+
+# Curva de latido: doble pulso rápido + pausa (escala relativa)
+HEARTBEAT_FRAMES = [1.0, 1.18, 1.0, 1.10, 1.0, 1.0, 1.0, 1.0]
+
+# Logo oficial Gemini 2025 (estrella 4 puntas con gradiente azul→violeta)
+_GEMINI_STAR_PATH = (
+    "M32.4473 0C33.1278 0 33.7197 0.464783 33.8857 1.125C34.3947 3.14441 35.0586 5.11414 "
+    "35.8848 7.03027C38.0369 12.0299 40.99 16.406 44.7393 20.1553C48.4903 23.9045 52.8647 "
+    "26.8576 57.8643 29.0098C59.7821 29.8359 61.7502 30.4998 63.7695 31.0088C64.4297 31.1748 "
+    "64.8944 31.7668 64.8945 32.4473C64.8945 33.1278 64.4298 33.7198 63.7695 33.8857C61.7502 "
+    "34.3947 59.7803 35.0586 57.8643 35.8848C52.8646 38.037 48.4885 40.99 44.7393 44.7393C40.99 "
+    "48.4904 38.037 52.8646 35.8848 57.8643C35.0586 59.7822 34.3947 61.7502 33.8857 63.7695C"
+    "33.7198 64.4298 33.1278 64.8945 32.4473 64.8945C31.7668 64.8944 31.1748 64.4297 31.0088 "
+    "63.7695C30.4998 61.7502 29.8359 59.7803 29.0098 57.8643C26.8576 52.8647 23.9063 48.4885 "
+    "20.1553 44.7393C16.4041 40.99 12.0299 38.0369 7.03027 35.8848C5.1123 35.0586 3.14441 "
+    "34.3947 1.125 33.8857C0.464783 33.7197 0 33.1278 0 32.4473C8.67651e-05 31.7668 0.464826 "
+    "31.1748 1.125 31.0088C3.14442 30.4998 5.11413 29.836 7.03027 29.0098C12.03 26.8575 16.406 "
+    "23.9046 20.1553 20.1553C23.9046 16.406 26.8575 12.03 29.0098 7.03027C29.836 5.11229 "
+    "30.4998 3.14442 31.0088 1.125C31.1748 0.464826 31.7668 8.67651e-05 32.4473 0Z"
+)
+GEMINI_STAR_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64.8945 64.8945">'
+    '<defs><linearGradient id="g" x1="18.4474" y1="43.4202" x2="52.1528" y2="15.0035" '
+    'gradientUnits="userSpaceOnUse">'
+    '<stop offset="0" stop-color="#4893FC"/>'
+    '<stop offset="0.27" stop-color="#4893FC"/>'
+    '<stop offset="0.77" stop-color="#969DFF"/>'
+    '<stop offset="1" stop-color="#BD99FE"/>'
+    '</linearGradient></defs>'
+    f'<path fill="url(#g)" d="{_GEMINI_STAR_PATH}"/>'
+    '</svg>'
+)
+_GEMINI_RENDERER = None
+
+def _gemini_renderer():
+    global _GEMINI_RENDERER
+    if _GEMINI_RENDERER is None:
+        _GEMINI_RENDERER = QSvgRenderer(QByteArray(GEMINI_STAR_SVG.encode()))
+    return _GEMINI_RENDERER
+
+def _detect_wayland():
+    if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+        return True
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return True
+    if Path(f"/run/user/{os.getuid()}/wayland-0").exists():
+        return True
+    try:
+        import subprocess
+        sid = os.environ.get("XDG_SESSION_ID", "")
+        if sid:
+            out = subprocess.run(
+                ["loginctl", "show-session", sid, "-p", "Type", "--value"],
+                capture_output=True, text=True, timeout=2
+            ).stdout.strip()
+            return out == "wayland"
+    except Exception:
+        pass
+    return False
+
+IS_WAYLAND = _detect_wayland()
+
+HANDY_PINK = "#E91E8C"
+
+
+def run(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def get_driver() -> str:
+    try:
+        return DRIVER_FILE.read_text().strip()
+    except Exception:
+        return "gemini"
+
+
+def check_status():
+    shortcuts_ok = (
+        run(["pgrep", "-f", "talk2ai-keys"]).returncode == 0
+        if IS_WAYLAND else
+        run(["pgrep", "xbindkeys"]).returncode == 0
+    )
+    shortcuts_label = "talk2ai-keys" if IS_WAYLAND else "xbindkeys"
+    driver = get_driver()
+    driver_label = f"{driver} CLI"
+    handy_ok = run(["pgrep", "-x", "handy"]).returncode == 0
+    return {
+        "Servicio":      run(["systemctl", "--user", "is-active", SERVICE]).stdout.strip() == "active",
+        shortcuts_label: shortcuts_ok,
+        "Handy DB":      HANDY_DB.exists(),
+        driver_label:    run(["which", driver]).returncode == 0,
+        "espeak-ng":     run(["which", "espeak-ng"]).returncode == 0,
+        "_handy_ok":     handy_ok,
+    }
+
+
+def get_mode():
+    try:
+        return MODE_FILE.read_text().strip()
+    except Exception:
+        return "ai"
+
+
+def get_model():
+    try:
+        return MODEL_FILE.read_text().strip()
+    except Exception:
+        return ""
+
+
+def make_icon(mode, driver, all_ok, beat_scale=1.0):
+    S = 64
+    px = QPixmap(S, S)
+    px.fill(QColor(0, 0, 0, 0))
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # Aplicar escala de latido centrada en el icono principal (círculo 48px)
+    if beat_scale != 1.0:
+        cx, cy = 24.0, 24.0
+        p.translate(cx, cy)
+        p.scale(beat_scale, beat_scale)
+        p.translate(-cx, -cy)
+
+    clip = QPainterPath()
+    clip.addEllipse(QRectF(1, 1, 46, 46))
+    p.setClipPath(clip)
+    p.setPen(Qt.PenStyle.NoPen)
+
+    if mode == "dictate":
+        p.setBrush(QBrush(QColor(HANDY_PINK)))
+        p.drawEllipse(1, 1, 46, 46)
+        p.setClipping(False)
+        p.setPen(QColor("white"))
+        font = QFont("Sans Serif", 22)
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(1, 1, 46, 46, Qt.AlignmentFlag.AlignCenter, "H")
+    elif driver == "gemini":
+        # Fondo circular oscuro con estrella Gemini
+        p.setBrush(QBrush(QColor("#0D0D1A")))
+        p.drawEllipse(1, 1, 46, 46)
+        p.setClipping(False)
+        _gemini_renderer().render(p, QRectF(2, 2, 44, 44))
+    else:
+        # Icono genérico: círculo con inicial del driver en mayúscula
+        p.setBrush(QBrush(QColor("#333")))
+        p.drawEllipse(1, 1, 46, 46)
+        p.setClipping(False)
+        p.setPen(QColor("white"))
+        font = QFont("Sans Serif", 22)
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(1, 1, 46, 46, Qt.AlignmentFlag.AlignCenter, driver[0].upper())
+
+    # Resetear transformación para el punto de estado (posición fija)
+    p.resetTransform()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor("white")))
+    p.drawEllipse(43, 43, 18, 18)
+    dot = QColor("#4CAF50") if all_ok else QColor("#F44336")
+    p.setBrush(QBrush(dot))
+    p.drawEllipse(45, 45, 14, 14)
+
+    p.end()
+    return QIcon(px)
+
+
+def make_ai_icon(size=64):
+    px = QPixmap(size, size)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    grad = QRadialGradient(size / 2, size / 2, size / 2)
+    grad.setColorAt(0.0, QColor("#7C3AED"))
+    grad.setColorAt(1.0, QColor("#1E3A8A"))
+    p.setBrush(QBrush(grad))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(0, 0, size, size)
+    font = QFont("sans-serif", int(size * 0.42), QFont.Weight.Bold)
+    p.setFont(font)
+    p.setPen(QColor("#FFFFFF"))
+    p.drawText(QRectF(0, 0, size, size), Qt.AlignmentFlag.AlignCenter, "✦")
+    p.end()
+    return QIcon(px)
+
+
+class DebugWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("talk2ai Debug — Preguntas y Respuestas")
+        self.setWindowIcon(make_ai_icon())
+        self.resize(750, 520)
+        self._line_count = 0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self.text = QTextBrowser()
+        self.text.setOpenExternalLinks(True)
+        self.text.setStyleSheet(
+            "QTextBrowser {"
+            "  background: #0D0D1A;"
+            "  color: #E0E0E0;"
+            "  font-family: monospace;"
+            "  font-size: 11pt;"
+            "  border: 1px solid #333;"
+            "}"
+            "QTextBrowser a { color: #80DEEA; }"
+        )
+        layout.addWidget(self.text)
+
+        btn_bar = QHBoxLayout()
+        btn_bar.addStretch()
+        btn_clear = QPushButton("Limpiar")
+        btn_clear.setFixedWidth(90)
+        btn_clear.clicked.connect(self._clear)
+        btn_bar.addWidget(btn_clear)
+        layout.addLayout(btn_bar)
+
+    def _clear(self):
+        self.text.clear()
+        self._line_count = 0
+        try:
+            DEBUG_LOG_FILE.write_text("")
+        except Exception:
+            pass
+
+    def load_all(self):
+        self.text.clear()
+        self._line_count = 0
+        self._read_new_lines()
+
+    def _read_new_lines(self):
+        try:
+            lines = DEBUG_LOG_FILE.read_text().splitlines()
+        except Exception:
+            return
+        new_lines = lines[self._line_count:]
+        if not new_lines:
+            return
+        self._line_count = len(lines)
+        import html as _html
+        for line in new_lines:
+            parts = line.split("|", 2)
+            if len(parts) != 3:
+                continue
+            ts, kind, text = parts
+            try:
+                ms = int(ts)
+                if ms > 9_999_999_999:
+                    dt = datetime.fromtimestamp(ms / 1000).strftime("%H:%M:%S") + f".{ms % 1000:03d}"
+                else:
+                    dt = datetime.fromtimestamp(ms).strftime("%H:%M:%S")
+            except Exception:
+                dt = ts
+
+            if kind == "SEP":
+                frag = '<span style="color:#2a2a3a">────────────────────────────────────────</span>'
+            elif kind == "INFO":
+                frag = (
+                    f'<span style="color:#616161">[{dt}]</span>&nbsp;'
+                    f'<span style="color:#9E9E9E">📋 {_html.escape(text)}</span>'
+                )
+            elif kind == "L":
+                frag = (
+                    f'<span style="color:#616161">[{dt}]</span>&nbsp;'
+                    f'<span style="color:#FFB300">🔗</span>&nbsp;'
+                    f'<a href="{_html.escape(text)}" style="color:#80DEEA;">{_html.escape(text)}</a>'
+                )
+            elif kind == "D":
+                frag = (
+                    f'<span style="color:#616161">[{dt}]</span>&nbsp;'
+                    f'<span style="color:{HANDY_PINK}"><b>[Dictado]</b></span>&nbsp;'
+                    f'<span style="color:#E0E0E0">{_html.escape(text)}</span>'
+                )
+            elif kind == "Q":
+                frag = (
+                    f'<span style="color:#616161">[{dt}]</span>&nbsp;'
+                    f'<span style="color:#4FC3F7"><b>[Tú]</b></span>&nbsp;'
+                    f'<span style="color:#E0E0E0">{_html.escape(text)}</span>'
+                )
+            elif kind == "A":
+                frag = (
+                    f'<span style="color:#616161">[{dt}]</span>&nbsp;'
+                    f'<span style="color:#A5D6A7"><b>[IA]</b></span>&nbsp;'
+                    f'<span style="color:#E0E0E0">{_html.escape(text)}</span>'
+                )
+            elif kind == "STAT":
+                frag = (
+                    f'<span style="color:#616161">[{dt}]</span>&nbsp;'
+                    f'<span style="color:#FFD54F">{_html.escape(text)}</span>'
+                )
+            else:
+                continue
+
+            cursor = self.text.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            if not self.text.document().isEmpty():
+                cursor.insertBlock()
+            cursor.insertHtml(frag)
+        sb = self.text.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+
+class StatusWorker(QObject):
+    done = pyqtSignal(dict)
+
+    def run(self):
+        self.done.emit(check_status())
+
+
+class TalkTray:
+    def __init__(self, app):
+        self.app = app
+        self.tray = QSystemTrayIcon()
+        self._status = {}
+        self._all_ok = False
+        self._checking = False
+        self._processing = False
+        self._beat_frame = 0
+        self._debug_window = None
+        self._build_menu()
+        self.tray.setIcon(make_icon(get_mode(), get_driver(), False))
+        self.tray.setContextMenu(self.menu)
+        self.tray.show()
+
+        TALK2AI_DIR.mkdir(exist_ok=True)
+        MODE_FILE.touch(exist_ok=True)
+        DRIVER_FILE.touch(exist_ok=True)
+        self._watcher = QFileSystemWatcher([str(MODE_FILE), str(DRIVER_FILE)])
+        self._watcher.fileChanged.connect(self._on_file_changed)
+        if STATE_FILE.exists():
+            self._watcher.addPath(str(STATE_FILE))
+            try:
+                self._processing = STATE_FILE.read_text().strip() == "processing"
+            except Exception:
+                pass
+        if DEBUG_LOG_FILE.exists():
+            self._watcher.addPath(str(DEBUG_LOG_FILE))
+        if DEBUG_ENABLED_FILE.exists():
+            self._debug_window = DebugWindow()
+            self._debug_window.load_all()
+            self._debug_window.show()
+
+        self._beat_timer = QTimer()
+        self._beat_timer.setInterval(90)
+        self._beat_timer.timeout.connect(self._beat_step)
+        if self._processing:
+            self._beat_timer.start()
+
+        self._async_check()
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._async_check)
+        self.timer.start(3000)
+
+    def _build_menu(self):
+        self.menu = QMenu()
+
+        self.lbl_mode = self.menu.addAction("Modo: —")
+        self.lbl_mode.setEnabled(False)
+
+        self.menu.addSeparator()
+
+        # Estado (filas dinámicas, se recalculan con check_status)
+        self._status_rows = []
+        self._status_cache = {}
+        for _ in range(3):  # máximo 3 filas de 2 columnas
+            act = self.menu.addAction("")
+            act.setEnabled(False)
+            self._status_rows.append(act)
+
+        self.menu.addSeparator()
+
+        lbl_driver = self.menu.addAction("  Driver IA:")
+        lbl_driver.setEnabled(False)
+
+        act_gemini = self.menu.addAction("🌟  Gemini")
+        act_gemini.triggered.connect(lambda: self._set_driver("gemini"))
+
+        self.menu.addSeparator()
+
+        act_g = self.menu.addAction("🤖  Modo IA           Alt+Super+G")
+        act_g.triggered.connect(lambda: self._set_mode("ai"))
+
+        act_h = self.menu.addAction("⌨️   Modo Dictado    Alt+Super+H")
+        act_h.triggered.connect(lambda: self._set_mode("dictate"))
+
+        act_ptt = self.menu.addAction("🎙️   Grabar / Parar      Ctrl+Space")
+        act_ptt.triggered.connect(lambda: subprocess.Popen(["handy", "--toggle-transcription"]))
+
+        act_stop_rec = self.menu.addAction("⏹️   Parar grabación")
+        act_stop_rec.triggered.connect(self._stop_recording)
+
+        act_stop = self.menu.addAction("⏸️   Detener audio      Ctrl+Alt+Q")
+        act_stop.triggered.connect(lambda: subprocess.Popen(["pkill", "-f", "espeak-ng"]))
+
+        self.menu.addSeparator()
+
+        self.act_debug = self.menu.addAction("🔍  Debug Q&A")
+        self.act_debug.setCheckable(True)
+        self.act_debug.setChecked(DEBUG_ENABLED_FILE.exists())
+        self.act_debug.triggered.connect(self._toggle_debug)
+
+        self.menu.addSeparator()
+
+        self.act_handy = self.menu.addAction("▶  Abrir Handy")
+        self.act_handy.triggered.connect(self._ensure_handy)
+
+        act_restart = self.menu.addAction("↺  Reiniciar servicio")
+        act_restart.triggered.connect(lambda: subprocess.Popen(
+            ["systemctl", "--user", "restart", SERVICE]))
+
+        self.menu.addSeparator()
+
+        session = "Wayland" if IS_WAYLAND else "X11"
+        lbl_session = self.menu.addAction(f"  Sesión: {session}")
+        lbl_session.setEnabled(False)
+
+        self.menu.addSeparator()
+
+        act_quit = self.menu.addAction("Salir")
+        act_quit.triggered.connect(self.app.quit)
+
+    def _on_file_changed(self, path):
+        if path not in self._watcher.files():
+            self._watcher.addPath(path)
+        if path == str(STATE_FILE):
+            self._on_state_changed()
+        elif path == str(DEBUG_LOG_FILE):
+            if self._debug_window and self._debug_window.isVisible():
+                self._debug_window._read_new_lines()
+        else:
+            self._update_ui(get_mode(), get_driver(), self._status, self._all_ok)
+
+    def _on_state_changed(self):
+        try:
+            state = STATE_FILE.read_text().strip()
+        except Exception:
+            state = "idle"
+        was_processing = self._processing
+        self._processing = (state == "processing")
+        if self._processing and not was_processing:
+            self._beat_frame = 0
+            self._beat_timer.start()
+        elif not self._processing and was_processing:
+            self._beat_timer.stop()
+            self._beat_frame = 0
+            self._update_ui(get_mode(), get_driver(), self._status, self._all_ok)
+
+    def _beat_step(self):
+        self._beat_frame = (self._beat_frame + 1) % len(HEARTBEAT_FRAMES)
+        scale = HEARTBEAT_FRAMES[self._beat_frame]
+        self.tray.setIcon(make_icon(get_mode(), get_driver(), self._all_ok, beat_scale=scale))
+
+    def _toggle_debug(self, checked):
+        if checked:
+            DEBUG_LOG_FILE.write_text("")
+            DEBUG_ENABLED_FILE.touch()
+            self._watcher.addPath(str(DEBUG_LOG_FILE))
+            if self._debug_window is None:
+                self._debug_window = DebugWindow()
+            self._debug_window.load_all()
+            self._debug_window.show()
+            self._debug_window.raise_()
+        else:
+            DEBUG_ENABLED_FILE.unlink(missing_ok=True)
+            if self._debug_window:
+                self._debug_window.hide()
+        self.act_debug.setChecked(checked)
+
+    def _ensure_handy(self):
+        def _do():
+            if subprocess.run(["pgrep", "-x", "handy"], capture_output=True).returncode != 0:
+                subprocess.Popen(["/home/gtx/.local/bin/handy"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _stop_recording(self):
+        """Para la grabación de Handy. Si no responde en 2s, lo mata."""
+        def _do():
+            try:
+                subprocess.run(["handy", "--toggle-transcription"],
+                               capture_output=True, timeout=2)
+            except subprocess.TimeoutExpired:
+                subprocess.run(["pkill", "-9", "-x", "handy"], capture_output=True)
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _set_mode(self, mode):
+        MODE_FILE.write_text(mode)
+        self._update_ui(mode, get_driver(), self._status, self._all_ok)
+
+    def _set_driver(self, driver: str):
+        DRIVER_FILE.write_text(driver)
+        self._update_ui(get_mode(), driver, self._status, self._all_ok)
+
+    def _async_check(self):
+        if self._checking:
+            return
+        self._checking = True
+        worker = StatusWorker()
+        worker.done.connect(self._on_status)
+        threading.Thread(target=worker.run, daemon=True).start()
+
+    def _on_status(self, status):
+        self._checking = False
+        self._handy_ok = status.pop("_handy_ok", False)
+        self._status = status
+        self._all_ok = all(status.values())
+        self._update_ui(get_mode(), get_driver(), status, self._all_ok)
+
+    def _update_ui(self, mode, driver, status, all_ok):
+        if STATE_FILE.exists() and str(STATE_FILE) not in self._watcher.files():
+            self._watcher.addPath(str(STATE_FILE))
+        if not self._processing:
+            self.tray.setIcon(make_icon(mode, driver, all_ok))
+
+        model = get_model()
+        if mode == "dictate":
+            mode_label = "⌨️  Dictado"
+        else:
+            mode_label = f"🤖 {driver}  ·  {model}" if model else f"🤖 {driver}"
+        ok_str = "Todo OK" if all_ok else "⚠ Hay problemas"
+        self.tray.setToolTip(f"talk2ai  |  {mode_label}  |  {ok_str}")
+        self.lbl_mode.setText(f"  Modo: {mode_label}")
+
+        handy_ok = getattr(self, "_handy_ok", False)
+        self.act_handy.setText("✓  Handy corriendo" if handy_ok else "▶  Abrir Handy")
+        self.act_handy.setEnabled(not handy_ok)
+
+        self._status_cache.update(status)
+        labels = list(status.keys())
+        for i, act in enumerate(self._status_rows):
+            l1 = labels[i * 2] if i * 2 < len(labels) else None
+            l2 = labels[i * 2 + 1] if i * 2 + 1 < len(labels) else None
+            if l1 is None:
+                act.setText("")
+                continue
+            parts = []
+            for lbl in (l1, l2):
+                if lbl:
+                    sym = "✓" if self._status_cache.get(lbl) else "✗"
+                    parts.append(f"{sym}  {lbl}")
+            act.setText("  " + "      ".join(parts))
+
+
+if __name__ == "__main__":
+    import fcntl
+    import time
+
+    TALK2AI_DIR.mkdir(exist_ok=True)
+    lock_file = open(TALK2AI_DIR / "tray.lock", "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        sys.exit(0)
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+
+    for _ in range(30):
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            break
+        time.sleep(1)
+
+    TalkTray(app)
+    sys.exit(app.exec())

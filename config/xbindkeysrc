@@ -1,0 +1,11 @@
+# Modo Gemini: cambiar modo (luego usar Super+Space de Handy para grabar)
+"echo gemini > /tmp/handy-mode && notify-send 'Handy' '🤖 Modo Gemini' -t 1500"
+  Mod1+Mod4+g
+
+# Modo Dictado: cambiar modo (luego usar Super+Space de Handy para grabar)
+"echo dictate > /tmp/handy-mode && notify-send 'Handy' '⌨️ Modo Dictado' -t 1500"
+  Mod1+Mod4+h
+
+# Detener audio espeak-ng
+"pkill -f espeak-ng"
+  Control+Mod1+q

@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# Control de talk2ai con notificaciones y menú KDE
+
+show_menu() {
+    kdialog --title "talk2ai Control" \
+            --menu "Selecciona una opción:" \
+            1 "ℹ️  Información" \
+            2 "▶️  Iniciar talk2ai" \
+            3 "⏹️  Detener talk2ai" \
+            4 "🔄 Reiniciar" \
+            5 "📋 Ver logs" \
+            6 "❌ Salir"
+}
+
+show_info() {
+    kdialog --title "talk2ai - Información" \
+            --textbox /dev/stdin 400 300 << 'EOF'
+╔════════════════════════════════════════╗
+║   TALK2AI — ASISTENTE DE VOZ           ║
+╚════════════════════════════════════════╝
+
+ATAJOS DE TECLADO:
+  Alt+Super+G  →  Modo IA
+  Alt+Super+H  →  Modo Dictado
+  Ctrl+Space   →  Grabar (PTT)
+  Ctrl+Alt+Q   →  Detener audio
+
+FLUJO:
+  1. Presiona Ctrl+Space y habla
+  2. Handy transcribe
+  3. El driver IA procesa
+  4. Escuchas la respuesta en audio
+
+VOZ CONFIGURADA:
+  Idioma: Español (España)
+  Velocidad: 140 palabras/minuto
+  Pitch: 40 (neutral-bajo)
+  Motor: espeak-ng
+
+RECURSOS:
+  • Script: ~/.local/bin/talk2ai-daemon
+  • Config: ~/.talk2ai/
+  • Logs: journalctl --user -u talk2ai.service -f
+EOF
+}
+
+start_service() {
+    systemctl --user start talk2ai.service
+    if [ $? -eq 0 ]; then
+        notify-send "talk2ai" "✅ Iniciado correctamente" -i system-run
+    else
+        kdialog --error "Error al iniciar el servicio"
+    fi
+}
+
+stop_service() {
+    systemctl --user stop talk2ai.service
+    if [ $? -eq 0 ]; then
+        notify-send "talk2ai" "⏹️ Detenido" -i system-shutdown
+    else
+        kdialog --error "Error al detener el servicio"
+    fi
+}
+
+restart_service() {
+    systemctl --user restart talk2ai.service
+    if [ $? -eq 0 ]; then
+        notify-send "talk2ai" "🔄 Reiniciado" -i system-reboot
+    else
+        kdialog --error "Error al reiniciar"
+    fi
+}
+
+view_logs() {
+    journalctl --user -u talk2ai.service -n 50 | \
+    kdialog --title "talk2ai - Logs" \
+            --textbox /dev/stdin 600 400
+}
+
+# Main loop
+while true; do
+    choice=$(show_menu)
+    case $choice in
+        1) show_info ;;
+        2) start_service ;;
+        3) stop_service ;;
+        4) restart_service ;;
+        5) view_logs ;;
+        6) exit 0 ;;
+        *) exit 0 ;;
+    esac
+done

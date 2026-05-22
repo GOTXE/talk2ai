@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Daemon de atajos globales via evdev (Wayland/X11).
+Lee directamente de /dev/input sin kglobalaccel. Requiere grupo 'input'.
+Sin popups, sin D-Bus complejo. Funciona igual en X11 y Wayland.
+"""
+
+import asyncio
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import evdev
+from evdev import ecodes, InputDevice
+
+TALK2AI_DIR = Path.home() / ".talk2ai"
+MODE_FILE = TALK2AI_DIR / "mode"
+
+MODIFIER_KEYS = {
+    ecodes.KEY_LEFTALT:   "ALT",
+    ecodes.KEY_RIGHTALT:  "ALT",
+    ecodes.KEY_LEFTMETA:  "META",
+    ecodes.KEY_RIGHTMETA: "META",
+    ecodes.KEY_LEFTCTRL:  "CTRL",
+    ecodes.KEY_RIGHTCTRL: "CTRL",
+}
+
+# (frozenset de modificadores, keycode) → acción
+SHORTCUTS = {
+    (frozenset({"ALT", "META"}), ecodes.KEY_G): "ai",
+    (frozenset({"ALT", "META"}), ecodes.KEY_H): "dictate",
+    (frozenset({"CTRL", "ALT"}), ecodes.KEY_Q): "stop",
+}
+
+active_mods: set[str] = set()
+_resume_until: float = 0.0  # timestamp hasta el que ignorar eventos PTT tras resume
+
+
+def set_mode(mode: str):
+    MODE_FILE.write_text(mode)
+    label = "🤖 Modo IA" if mode != "dictate" else "⌨️ Modo Dictado"
+    subprocess.Popen(["notify-send", "Handy", label, "-t", "1500"])
+    print(f"handy-keys: modo → {mode}", flush=True)
+
+
+def stop_audio():
+    subprocess.Popen(["pkill", "-f", "espeak-ng"])
+    print("handy-keys: audio detenido", flush=True)
+
+
+async def toggle_handy_recording():
+    # Comprobar si Handy está corriendo sin bloquear el event loop
+    proc = await asyncio.create_subprocess_exec(
+        "pgrep", "-f", "handy",
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+    )
+    await proc.wait()
+    if proc.returncode != 0:
+        print("handy-keys: Handy no está corriendo, ignorando toggle", flush=True)
+        return
+    subprocess.Popen(["handy", "--toggle-transcription"])
+    print("handy-keys: toggle grabación", flush=True)
+
+
+def handle_event(event):
+    global ptt_active
+    if event.type != ecodes.EV_KEY:
+        return
+    code, value = event.code, event.value  # value: 0=up 1=down 2=hold
+
+    if code in MODIFIER_KEYS:
+        mod = MODIFIER_KEYS[code]
+        if value == 1:
+            active_mods.add(mod)
+        elif value == 0:
+            active_mods.discard(mod)
+        return
+
+    # Toggle grabación: Ctrl+Space — cada keydown alterna inicio/fin
+    if code == ecodes.KEY_SPACE:
+        if time.monotonic() < _resume_until:
+            return  # ignorar eventos justo tras resume/reconexión
+        if value == 1 and "CTRL" in active_mods:  # solo en keydown, no en keyup ni repeat
+            asyncio.ensure_future(toggle_handy_recording())
+        return
+
+    if value != 1:  # solo en key-down para el resto de atajos
+        return
+
+    action = SHORTCUTS.get((frozenset(active_mods), code))
+    if action == "ai":
+        set_mode("ai")
+    elif action == "dictate":
+        set_mode("dictate")
+    elif action == "stop":
+        stop_audio()
+
+
+async def monitor_device(device: InputDevice):
+    global active_mods, ptt_active, _resume_until
+    try:
+        async for event in device.async_read_loop():
+            handle_event(event)
+    except OSError:
+        pass
+    finally:
+        # Dispositivo desconectado (suspend/resume): salir para que el keepalive relance fresh
+        active_mods.clear()
+        _resume_until = time.monotonic() + 1.0
+        print(f"handy-keys: dispositivo desconectado ({device.path}), saliendo para relanzar", flush=True)
+        asyncio.get_event_loop().stop()
+
+
+def find_keyboards() -> list[InputDevice]:
+    devices = []
+    for path in evdev.list_devices():
+        try:
+            d = InputDevice(path)
+            caps = d.capabilities()
+            keys = caps.get(ecodes.EV_KEY, [])
+            # Teclado si tiene KEY_G y al menos un modificador
+            if ecodes.KEY_G in keys and ecodes.KEY_LEFTALT in keys:
+                devices.append(d)
+        except Exception:
+            pass
+    return devices
+
+
+async def main():
+    global _resume_until
+    TALK2AI_DIR.mkdir(exist_ok=True)
+    _resume_until = time.monotonic() + 1.0  # ignorar PTT durante 1s al arrancar
+    keyboards = find_keyboards()
+    if not keyboards:
+        print("handy-keys: no se encontraron teclados en /dev/input", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"handy-keys: monitorizando {len(keyboards)} teclado(s)", flush=True)
+    for d in keyboards:
+        print(f"  {d.path} — {d.name}", flush=True)
+    print("  Alt+Meta+G  → Modo IA", flush=True)
+    print("  Alt+Meta+H  → Modo Dictado", flush=True)
+    print("  Ctrl+Alt+Q  → Detener audio", flush=True)
+    print("  Ctrl+Space  → PTT Handy (hold para grabar)", flush=True)
+
+    await asyncio.gather(*[monitor_device(d) for d in keyboards])
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

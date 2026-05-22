@@ -1,0 +1,17 @@
+[Unit]
+Description=talk2ai — voice assistant daemon
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+ExecStart=/home/gtx/.local/bin/talk2ai-daemon
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

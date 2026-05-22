@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>talk2ai — Arquitectura</title>
+<style>
+:root {
+  --bg:        #070712;
+  --bg2:       #0d0d1a;
+  --bg3:       #13132a;
+  --border:    #1e1e3a;
+  --text:      #e0e0e0;
+  --muted:     #666;
+  --ai1:       #4893fc;
+  --ai2:       #bd99fe;
+  --dictate:   #e91e8c;
+  --green:     #4caf50;
+  --yellow:    #ffd54f;
+  --cyan:      #80deea;
+  --radius:    10px;
+  --font:      'Segoe UI', system-ui, sans-serif;
+  --mono:      'Fira Code', 'Cascadia Code', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ── NAV ── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(7,7,18,.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 2rem;
+  padding: .6rem 2rem;
+  font-size: .85rem;
+}
+nav .logo {
+  font-weight: 700; font-size: 1rem;
+  background: linear-gradient(90deg, var(--ai1), var(--ai2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  white-space: nowrap;
+}
+nav a { color: var(--muted); text-decoration: none; transition: color .2s; }
+nav a:hover { color: var(--text); }
+
+/* ── HERO ── */
+.hero {
+  text-align: center;
+  padding: 5rem 2rem 3rem;
+  background: radial-gradient(ellipse 80% 60% at 50% 0%, #14143a, transparent);
+}
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 800; letter-spacing: -.5px;
+  background: linear-gradient(135deg, var(--ai1) 0%, var(--ai2) 60%, var(--dictate) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-bottom: .5rem;
+}
+.hero p { color: var(--muted); font-size: 1.1rem; max-width: 600px; margin: 0 auto; }
+.badge {
+  display: inline-flex; align-items: center; gap: .4rem;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 20px; padding: .25rem .9rem; font-size: .8rem;
+  color: var(--muted); margin: 1.5rem auto 0; cursor: default;
+}
+
+/* ── SECTIONS ── */
+section { max-width: 1200px; margin: 0 auto; padding: 3rem 2rem; }
+.section-title {
+  font-size: 1.5rem; font-weight: 700; margin-bottom: .5rem;
+  display: flex; align-items: center; gap: .6rem;
+}
+.section-title span { opacity: .5; font-weight: 400; font-size: 1rem; }
+.section-sub { color: var(--muted); margin-bottom: 2rem; font-size: .95rem; }
+hr.sep { border: none; border-top: 1px solid var(--border); margin: 0 2rem; }
+
+/* ── MODE TABS ── */
+.tabs {
+  display: flex; gap: .5rem; margin-bottom: 2rem;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .3rem; width: fit-content;
+}
+.tab {
+  padding: .5rem 1.4rem; border-radius: 7px; cursor: pointer;
+  border: none; background: transparent; color: var(--muted);
+  font-size: .9rem; font-family: var(--font); transition: all .2s;
+}
+.tab.active-ai   { background: linear-gradient(135deg,#1a2a4a,#2a1a4a); color: var(--ai1); }
+.tab.active-dict { background: #2a0d1e; color: var(--dictate); }
+
+/* ── MAIN DIAGRAM ── */
+.diagram-wrap {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+}
+#arch-svg {
+  width: 100%; height: auto;
+  display: block;
+}
+
+/* SVG component styles */
+.comp-box {
+  rx: 8; ry: 8;
+  transition: all .3s;
+}
+.comp-text { font-family: var(--font); font-size: 13px; fill: #e0e0e0; }
+.comp-sub  { font-family: var(--font); font-size: 10px; fill: #888; }
+.comp-icon { font-size: 16px; }
+
+/* Flow paths */
+.flow-ai     { stroke: var(--ai1); fill: none; stroke-width: 1.5; opacity: .7; }
+.flow-dict   { stroke: var(--dictate); fill: none; stroke-width: 1.5; opacity: .7; }
+.flow-state  { stroke: #888; fill: none; stroke-width: 1.2; stroke-dasharray: 4 3; opacity: .55; }
+.flow-shared { stroke: #6ecf73; fill: none; stroke-width: 1.5; opacity: .55; }
+
+/* Mode hidden */
+.mode-ai   { transition: opacity .4s; }
+.mode-dict { transition: opacity .4s; }
+.hidden-path { opacity: 0 !important; }
+
+/* Animated dot on path */
+.dot-ai {
+  r: 5; fill: var(--ai1);
+  filter: drop-shadow(0 0 6px var(--ai1));
+}
+.dot-dict {
+  r: 5; fill: var(--dictate);
+  filter: drop-shadow(0 0 6px var(--dictate));
+}
+
+/* ── FLOW DETAILS ── */
+.flows-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;
+}
+@media (max-width: 760px) { .flows-grid { grid-template-columns: 1fr; } }
+
+.flow-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.flow-card-header {
+  padding: 1rem 1.2rem;
+  display: flex; align-items: center; gap: .6rem;
+  font-weight: 600; font-size: .95rem;
+}
+.flow-card-header.ai   { background: linear-gradient(90deg,#0d1a2e,var(--bg2)); border-bottom: 1px solid #1a2a4a; }
+.flow-card-header.dict { background: linear-gradient(90deg,#1a0d14,var(--bg2)); border-bottom: 1px solid #2a0d1e; }
+
+.steps { padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 0; }
+.step {
+  display: flex; gap: .8rem; position: relative;
+  padding-bottom: 1.2rem;
+}
+.step:last-child { padding-bottom: 0; }
+.step-line {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 28px;
+}
+.step-dot {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .75rem; font-weight: 700; flex-shrink: 0;
+  position: relative; z-index: 1;
+}
+.step-dot.ai   { background: #1a2a4a; color: var(--ai1); border: 1px solid var(--ai1); }
+.step-dot.dict { background: #2a0d1e; color: var(--dictate); border: 1px solid var(--dictate); }
+.step-connector {
+  width: 1px; flex: 1; margin-top: 2px;
+  background: var(--border);
+}
+.step-body { padding-top: 4px; flex: 1; }
+.step-body strong { display: block; font-size: .9rem; margin-bottom: .1rem; }
+.step-body p { color: var(--muted); font-size: .8rem; }
+.step-body code {
+  font-family: var(--mono); font-size: .75rem;
+  background: var(--bg3); border: 1px solid var(--border);
+  padding: .1rem .4rem; border-radius: 4px; color: var(--cyan);
+  display: inline-block; margin-top: .2rem;
+}
+
+/* ── STATE FILES ── */
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+.file-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.1rem;
+  transition: border-color .2s;
+}
+.file-card:hover { border-color: #333; }
+.file-card h4 {
+  font-family: var(--mono); font-size: .85rem;
+  color: var(--cyan); margin-bottom: .4rem;
+  display: flex; align-items: center; gap: .4rem;
+}
+.file-card p { font-size: .8rem; color: var(--muted); margin-bottom: .5rem; }
+.file-meta { display: flex; flex-direction: column; gap: .2rem; }
+.file-meta span { font-size: .75rem; }
+.wr { color: #ffd54f; } .rd { color: var(--ai1); }
+
+/* ── DRIVER CONTRACT ── */
+.contract {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.contract-header {
+  padding: .8rem 1.2rem;
+  background: var(--bg3); border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: .85rem; color: var(--muted);
+}
+.contract pre {
+  padding: 1.2rem 1.4rem; font-family: var(--mono);
+  font-size: .83rem; color: var(--text); line-height: 1.8;
+  overflow-x: auto;
+}
+.kw  { color: var(--ai2); }
+.val { color: var(--cyan); }
+.cmt { color: var(--muted); }
+
+/* ── DEPS TABLE ── */
+table {
+  width: 100%; border-collapse: collapse;
+  background: var(--bg2); border-radius: var(--radius);
+  overflow: hidden; border: 1px solid var(--border);
+}
+th {
+  background: var(--bg3); padding: .7rem 1rem;
+  text-align: left; font-size: .8rem; font-weight: 600;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: .7rem 1rem; font-size: .85rem;
+  border-bottom: 1px solid var(--border);
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--bg3); }
+td:first-child { font-family: var(--mono); color: var(--cyan); font-size: .8rem; }
+.tag {
+  display: inline-block; padding: .1rem .5rem;
+  border-radius: 4px; font-size: .7rem; font-weight: 600;
+}
+.tag-ai   { background: #1a2a4a; color: var(--ai1); }
+.tag-dict { background: #2a0d1e; color: var(--dictate); }
+.tag-both { background: #1a2a1a; color: var(--green); }
+.tag-ui   { background: #2a2a0d; color: var(--yellow); }
+
+/* ── FOOTER ── */
+footer {
+  text-align: center; padding: 2rem;
+  color: var(--muted); font-size: .8rem;
+  border-top: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">✦ talk2ai</span>
+  <a href="#diagram">Diagrama</a>
+  <a href="#flows">Flujos</a>
+  <a href="#state">Estado</a>
+  <a href="#driver">Driver</a>
+  <a href="#deps">Dependencias</a>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <h1>talk2ai + Handy</h1>
+  <p>Asistente de voz en KDE Wayland — arquitectura del sistema</p>
+  <div class="badge">🐧 KDE Plasma · Wayland · Python · Bash</div>
+</div>
+
+<hr class="sep">
+
+<!-- DIAGRAM -->
+<section id="diagram">
+  <div class="section-title">🗺️ Arquitectura general <span>vista de componentes</span></div>
+  <p class="section-sub">Selecciona un modo para resaltar el flujo de datos activo.</p>
+
+  <div class="tabs">
+    <button class="tab active-ai" onclick="setMode('ai')" id="tab-ai">🤖 Modo IA</button>
+    <button class="tab" onclick="setMode('dict')" id="tab-dict">⌨️ Modo Dictado</button>
+    <button class="tab" onclick="setMode('all')" id="tab-all">Todos los flujos</button>
+  </div>
+
+  <div class="diagram-wrap">
+    <svg id="arch-svg" viewBox="0 0 1080 720" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad-ai" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#4893fc"/>
+          <stop offset="100%" stop-color="#bd99fe"/>
+        </linearGradient>
+        <linearGradient id="grad-bg-ai" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#0d1a2e"/>
+          <stop offset="100%" stop-color="#1a0d2e"/>
+        </linearGradient>
+        <linearGradient id="grad-bg-dict" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#2a0d1e"/>
+          <stop offset="100%" stop-color="#1a0d14"/>
+        </linearGradient>
+        <filter id="glow-ai">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+          <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-dict">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+          <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-response" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="6" result="blur"/>
+          <feColorMatrix in="blur" type="matrix"
+            values="0.3 0 0 0 0.3  0 0.6 0 0 0.6  0 0 1 0 1  0 0 0 1 0" result="coloredBlur"/>
+          <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <marker id="arr-ai" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#4893fc" opacity=".6"/>
+        </marker>
+        <marker id="arr-dict" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#e91e8c" opacity=".6"/>
+        </marker>
+        <marker id="arr-muted" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#555" opacity=".5"/>
+        </marker>
+
+        <!-- Animation paths (invisible) for dots -->
+        <path id="p-user-keys"   d="M500,82 L500,138"/>
+        <path id="p-keys-handy"  d="M470,168 L380,238"/>
+        <path id="p-keys-state"  d="M530,168 L700,238"/>
+        <path id="p-handy-sql"   d="M385,268 L440,348"/>
+        <path id="p-handy-hand"  d="M280,268 L240,348"/>
+        <path id="p-sql-daemon"  d="M440,398 L530,448"/>
+        <path id="p-hand-ydot"   d="M240,398 L250,448"/>
+        <path id="p-daemon-gem"  d="M600,468 L650,518"/>
+        <path id="p-daemon-esp"  d="M555,478 L530,518"/>
+        <path id="p-gem-daemon"  d="M755,532 L625,482"/>
+        <path id="p-esp-audio"   d="M520,568 L520,618"/>
+        <path id="p-ydot-win"    d="M250,488 L250,548"/>
+        <path id="p-daemon-not"  d="M650,468 L820,518"/>
+        <path id="p-not-browser" d="M861,568 L861,618"/>
+        <path id="p-state-tray"  d="M760,258 L870,248"/>
+        <!-- Compound chains for animated dots (avoid piling) -->
+        <path id="ai-chain"       d="M500,82 L500,138 L470,168 L380,238 L385,268 L440,348 L440,398 L530,448 L600,468 L650,518 L755,532 L625,482 L555,478 L530,518 L520,568 L520,618"/>
+        <path id="response-chain" d="M755,532 L625,482 L555,478 L530,518 L520,568 L520,618"/>
+        <path id="notify-chain"   d="M650,468 L820,518 L861,568 L861,618"/>
+        <path id="dict-chain"   d="M500,82 L500,138 L470,168 L380,238 L280,268 L240,348 L240,398 L250,448 L250,488 L250,548"/>
+      </defs>
+
+      <!-- ═══ BACKGROUND SECTIONS ═══ -->
+      <rect x="10" y="140" width="980" height="550" rx="12" fill="#0a0a18" opacity=".4"/>
+
+      <!-- Label: Núcleo del sistema -->
+      <text x="500" y="135" text-anchor="middle" font-size="10" fill="#333" font-family="sans-serif">── núcleo ──────────────────────────────────────────────────────────────</text>
+
+      <!-- ═══ CONNECTION LINES ═══ -->
+
+      <!-- User → keys (neutral: misma ruta en ambos modos) -->
+      <line x1="500" y1="82" x2="500" y2="138" stroke="#555" stroke-width="1.5" marker-end="url(#arr-muted)" class="flow-shared"/>
+
+      <!-- keys → Handy: verde base + overlay rosa en modo dictado -->
+      <line x1="470" y1="168" x2="380" y2="238" stroke="#555" stroke-width="1.5" marker-end="url(#arr-muted)" class="flow-shared"/>
+      <line x1="470" y1="168" x2="380" y2="238" class="mode-dict flow-dict" marker-end="url(#arr-dict)"/>
+
+      <!-- keys → state (mode file) -->
+      <line x1="530" y1="168" x2="700" y2="238" stroke="#555" stroke-width="1" stroke-dasharray="4 3" class="flow-shared"/>
+
+      <!-- Handy → SQLite (va a la derecha, sobre el daemon) -->
+      <line x1="385" y1="268" x2="440" y2="348" class="mode-ai flow-ai" marker-end="url(#arr-ai)"/>
+
+      <!-- Handy → handler (va a la izquierda, sobre ydotool) -->
+      <line x1="280" y1="268" x2="240" y2="348" class="mode-dict flow-dict" marker-end="url(#arr-dict)"/>
+
+      <!-- SQLite → daemon (casi vertical, sin cruzar) -->
+      <line x1="440" y1="398" x2="530" y2="448" class="mode-ai flow-ai" marker-end="url(#arr-ai)"/>
+
+      <!-- handler → ydotool (casi vertical, sin cruzar) -->
+      <line x1="240" y1="398" x2="250" y2="448" class="mode-dict flow-dict" marker-end="url(#arr-dict)"/>
+
+      <!-- daemon → AI CLI -->
+      <line x1="600" y1="468" x2="650" y2="518" class="mode-ai flow-ai" marker-end="url(#arr-ai)"/>
+
+      <!-- AI CLI → daemon (stream dashed) -->
+      <line x1="755" y1="532" x2="625" y2="482" class="mode-ai flow-ai" stroke-dasharray="3 3"/>
+
+      <!-- daemon → espeak -->
+      <line x1="555" y1="478" x2="530" y2="518" class="mode-ai flow-ai" marker-end="url(#arr-ai)"/>
+
+      <!-- espeak → audio output -->
+      <line x1="520" y1="568" x2="520" y2="618" class="mode-ai flow-ai" marker-end="url(#arr-ai)"/>
+
+      <!-- ydotool → active window -->
+      <line x1="250" y1="488" x2="250" y2="548" class="mode-dict flow-dict" marker-end="url(#arr-dict)"/>
+
+      <!-- daemon → notify-send -->
+      <line x1="650" y1="468" x2="820" y2="518" class="mode-ai flow-ai" marker-end="url(#arr-ai)"/>
+
+      <!-- notify → browser -->
+      <line x1="861" y1="568" x2="861" y2="618" class="mode-ai flow-ai" marker-end="url(#arr-ai)"/>
+
+      <!-- state → tray (watch) -->
+      <line x1="760" y1="258" x2="870" y2="248" stroke="#555" stroke-width="1" stroke-dasharray="3 3" class="flow-state"/>
+
+
+      <!-- ═══ COMPONENTS ═══ -->
+
+      <!-- USUARIO -->
+      <rect x="390" y="18" width="220" height="50" rx="10" fill="#12122a" stroke="#2a2a4a" stroke-width="1"/>
+      <text x="500" y="40" text-anchor="middle" font-family="sans-serif" font-size="17" fill="#e0e0e0">⌨️</text>
+      <text x="500" y="57" text-anchor="middle" class="comp-text" font-weight="600">Usuario / Teclado</text>
+
+      <!-- TALK2AI-KEYS -->
+      <rect x="390" y="138" width="220" height="50" rx="10" fill="#0d1520" stroke="#4893fc" stroke-width="1.5"/>
+      <text x="500" y="159" text-anchor="middle" font-family="sans-serif" font-size="15" fill="#4893fc">⚡</text>
+      <text x="500" y="175" text-anchor="middle" class="comp-text" font-weight="600" fill="#4893fc">talk2ai-keys</text>
+      <text x="500" y="182" text-anchor="middle" class="comp-sub">evdev · atajos globales Wayland</text>
+
+      <!-- HANDY -->
+      <rect x="240" y="238" width="180" height="50" rx="10" fill="#131320" stroke="#3a3a5a" stroke-width="1.5"/>
+      <text x="330" y="258" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#e0e0e0">🎙️</text>
+      <text x="330" y="274" text-anchor="middle" class="comp-text" font-weight="600">Handy (AppImage)</text>
+      <text x="330" y="282" text-anchor="middle" class="comp-sub">Whisper STT</text>
+
+      <!-- STATE FILES -->
+      <rect x="620" y="228" width="170" height="60" rx="10" fill="#12201a" stroke="#2a4a34" stroke-width="1.5"/>
+      <text x="705" y="250" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#4caf50">📁</text>
+      <text x="705" y="266" text-anchor="middle" class="comp-text" font-weight="600" fill="#4caf50">~/.talk2ai/</text>
+      <text x="705" y="280" text-anchor="middle" class="comp-sub">mode · driver · ai-state</text>
+
+      <!-- TALK2AI-TRAY -->
+      <rect x="830" y="228" width="150" height="50" rx="10" fill="#1a1a2a" stroke="#2a2a4a" stroke-width="1"/>
+      <text x="905" y="249" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#bd99fe">✦</text>
+      <text x="905" y="265" text-anchor="middle" class="comp-text" font-size="12" fill="#bd99fe">talk2ai-tray</text>
+      <text x="905" y="272" text-anchor="middle" class="comp-sub">PyQt6 · system tray</text>
+
+      <!-- HANDLER (dictate path) — izquierda, sobre ydotool -->
+      <rect x="160" y="348" width="160" height="50" rx="10" class="mode-dict" fill="url(#grad-bg-dict)" stroke="#e91e8c" stroke-width="1"/>
+      <text x="240" y="368" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-dict" fill="#e91e8c">📜</text>
+      <text x="240" y="384" text-anchor="middle" class="comp-text mode-dict" fill="#e91e8c">talk2ai-handler</text>
+      <text x="240" y="392" text-anchor="middle" class="comp-sub mode-dict">script externo Handy</text>
+
+      <!-- SQLITE DB (AI path) — derecha, sobre el daemon -->
+      <rect x="360" y="348" width="160" height="50" rx="10" class="mode-ai" fill="url(#grad-bg-ai)" stroke="#4893fc" stroke-width="1"/>
+      <text x="440" y="368" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-ai" fill="#4893fc">🗄️</text>
+      <text x="440" y="384" text-anchor="middle" class="comp-text mode-ai" fill="#4893fc">SQLite DB</text>
+      <text x="440" y="392" text-anchor="middle" class="comp-sub mode-ai">history.db</text>
+
+      <!-- DAEMON -->
+      <rect x="490" y="438" width="180" height="50" rx="10" class="mode-ai" fill="url(#grad-bg-ai)" stroke="#4893fc" stroke-width="1.5"/>
+      <text x="580" y="458" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-ai" fill="#4893fc">⚙️</text>
+      <text x="580" y="474" text-anchor="middle" class="comp-text mode-ai" font-weight="600" fill="#4893fc">talk2ai-daemon</text>
+      <text x="580" y="482" text-anchor="middle" class="comp-sub mode-ai">polling · streaming IA</text>
+
+      <!-- YDOTOOL (dictate path) -->
+      <rect x="160" y="448" width="160" height="50" rx="10" class="mode-dict" fill="url(#grad-bg-dict)" stroke="#e91e8c" stroke-width="1"/>
+      <text x="240" y="468" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-dict" fill="#e91e8c">⌨️</text>
+      <text x="240" y="484" text-anchor="middle" class="comp-text mode-dict" fill="#e91e8c">ydotool</text>
+      <text x="240" y="492" text-anchor="middle" class="comp-sub mode-dict">uinput · Wayland</text>
+
+      <!-- ESPEAK-NG -->
+      <rect x="450" y="518" width="140" height="50" rx="10" class="mode-ai" fill="#0d1520" stroke="#4893fc" stroke-width="1"/>
+      <text x="520" y="539" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-ai" fill="#4893fc">🔊</text>
+      <text x="520" y="555" text-anchor="middle" class="comp-text mode-ai" fill="#4893fc">espeak-ng</text>
+      <text x="520" y="563" text-anchor="middle" class="comp-sub mode-ai">TTS · streaming</text>
+
+      <!-- AI CLI -->
+      <rect x="612" y="518" width="150" height="50" rx="10" class="mode-ai" fill="#0d1520" stroke="url(#grad-ai)" stroke-width="1.5"/>
+      <text x="687" y="539" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-ai">🤖</text>
+      <text x="687" y="554" text-anchor="middle" class="comp-text mode-ai" fill="#bd99fe">AI CLI driver</text>
+      <text x="687" y="563" text-anchor="middle" class="comp-sub mode-ai">Gemini · Claude · Codex · ollama…</text>
+
+      <!-- NOTIFY-SEND -->
+      <rect x="786" y="518" width="150" height="50" rx="10" class="mode-ai" fill="#0d1520" stroke="#ffd54f" stroke-width="1"/>
+      <text x="861" y="539" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-ai" fill="#ffd54f">🔔</text>
+      <text x="861" y="555" text-anchor="middle" class="comp-text mode-ai" fill="#ffd54f">notify-send</text>
+      <text x="861" y="563" text-anchor="middle" class="comp-sub mode-ai">enlaces clickables</text>
+
+      <!-- AUDIO OUTPUT -->
+      <rect x="450" y="618" width="140" height="50" rx="10" class="mode-ai" fill="#0a1a0a" stroke="#4caf50" stroke-width="1"/>
+      <text x="520" y="638" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-ai" fill="#4caf50">🎧</text>
+      <text x="520" y="654" text-anchor="middle" class="comp-text mode-ai" fill="#4caf50">Audio</text>
+      <text x="520" y="662" text-anchor="middle" class="comp-sub mode-ai">respuesta en voz</text>
+
+      <!-- VENTANA ACTIVA -->
+      <rect x="160" y="548" width="160" height="50" rx="10" class="mode-dict" fill="url(#grad-bg-dict)" stroke="#e91e8c" stroke-width="1"/>
+      <text x="240" y="568" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-dict" fill="#e91e8c">🪟</text>
+      <text x="240" y="584" text-anchor="middle" class="comp-text mode-dict" fill="#e91e8c">Ventana activa</text>
+      <text x="240" y="592" text-anchor="middle" class="comp-sub mode-dict">texto dictado</text>
+
+      <!-- BROWSER -->
+      <rect x="786" y="618" width="150" height="50" rx="10" class="mode-ai" fill="#0d1a2e" stroke="#ffd54f" stroke-width="1"/>
+      <text x="861" y="638" text-anchor="middle" font-family="sans-serif" font-size="14" class="mode-ai" fill="#ffd54f">🌐</text>
+      <text x="861" y="654" text-anchor="middle" class="comp-text mode-ai" fill="#ffd54f">Navegador</text>
+      <text x="861" y="662" text-anchor="middle" class="comp-sub mode-ai">xdg-open · botón Abrir</text>
+
+      <!-- ═══ ANIMATED DOTS ═══ -->
+      <!-- AI dots: 2 azules por la cadena principal + 1 amarilla hacia notify -->
+      <g class="mode-ai">
+        <circle r="5" fill="#4893fc" filter="url(#glow-ai)">
+          <animateMotion dur="12s" repeatCount="indefinite" begin="0s" calcMode="paced">
+            <mpath href="#ai-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="12s" repeatCount="indefinite" begin="0s"
+            values="0;0.9;0.9;0" keyTimes="0;0.04;0.93;1" calcMode="linear"/>
+        </circle>
+        <circle r="5" fill="#4893fc" filter="url(#glow-ai)">
+          <animateMotion dur="12s" repeatCount="indefinite" begin="6s" calcMode="paced">
+            <mpath href="#ai-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="12s" repeatCount="indefinite" begin="6s"
+            values="0;0.9;0.9;0" keyTimes="0;0.04;0.93;1" calcMode="linear"/>
+        </circle>
+        <!-- Dots blancos pulsantes: la RESPUESTA del AI CLI (begin 8.1s y 2.1s,
+             sincroniados con cada blue dot al salir del AI CLI driver).
+             response-chain = tramo de vuelta: AI CLI → daemon → espeak → audio.
+             keyPoints/keyTimes proporcionales a la longitud de cada segmento
+             (total 357px) para velocidad idéntica a los dots azules. -->
+        <circle fill="#ffffff" filter="url(#glow-response)" class="mode-ai">
+          <animateMotion dur="12s" repeatCount="indefinite" begin="8.1s" calcMode="linear"
+            keyPoints="0;0.390;0.586;0.718;0.861;1;1"
+            keyTimes="0;0.127;0.190;0.233;0.280;0.325;1">
+            <mpath href="#response-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="12s" repeatCount="indefinite" begin="8.1s"
+            values="0;1;1;0;0" keyTimes="0;0.04;0.325;0.37;1" calcMode="linear"/>
+          <animate attributeName="r" dur="0.55s" repeatCount="indefinite"
+            values="5;8;5;8;5" calcMode="linear"/>
+        </circle>
+        <circle fill="#ffffff" filter="url(#glow-response)" class="mode-ai">
+          <animateMotion dur="12s" repeatCount="indefinite" begin="14.1s" calcMode="linear"
+            keyPoints="0;0.390;0.586;0.718;0.861;1;1"
+            keyTimes="0;0.127;0.190;0.233;0.280;0.325;1">
+            <mpath href="#response-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="12s" repeatCount="indefinite" begin="14.1s"
+            values="0;1;1;0;0" keyTimes="0;0.04;0.325;0.37;1" calcMode="linear"/>
+          <animate attributeName="r" dur="0.55s" repeatCount="indefinite"
+            values="5;8;5;8;5" calcMode="linear"/>
+        </circle>
+
+        <!-- Bolitas amarillas: aparecen justo al salir del AI CLI driver,
+             sincronizadas con cada blue dot (begin 9.5s y 3.5s),
+             misma velocidad que los azules (keyPoints proporcionales a segmentos) -->
+        <circle r="5" fill="#ffd54f" filter="url(#glow-ai)">
+          <animateMotion dur="12s" repeatCount="indefinite" begin="9.5s" calcMode="linear"
+            keyPoints="0;0.607;0.829;1;1" keyTimes="0;0.161;0.220;0.265;1">
+            <mpath href="#notify-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="12s" repeatCount="indefinite" begin="9.5s"
+            values="0;0.9;0.9;0;0" keyTimes="0;0.04;0.265;0.31;1" calcMode="linear"/>
+        </circle>
+        <circle r="5" fill="#ffd54f" filter="url(#glow-ai)">
+          <animateMotion dur="12s" repeatCount="indefinite" begin="15.5s" calcMode="linear"
+            keyPoints="0;0.607;0.829;1;1" keyTimes="0;0.161;0.220;0.265;1">
+            <mpath href="#notify-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="12s" repeatCount="indefinite" begin="15.5s"
+            values="0;0.9;0.9;0;0" keyTimes="0;0.04;0.265;0.31;1" calcMode="linear"/>
+        </circle>
+      </g>
+
+      <!-- Dict dots: 2 dots que recorren la cadena dictado desfasados 4s -->
+      <g class="mode-dict">
+        <circle r="5" fill="#e91e8c" filter="url(#glow-dict)">
+          <animateMotion dur="8s" repeatCount="indefinite" begin="3s" calcMode="paced">
+            <mpath href="#dict-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="8s" repeatCount="indefinite" begin="3s"
+            values="0;0.9;0.9;0" keyTimes="0;0.05;0.92;1" calcMode="linear"/>
+        </circle>
+        <circle r="5" fill="#e91e8c" filter="url(#glow-dict)">
+          <animateMotion dur="8s" repeatCount="indefinite" begin="7s" calcMode="paced">
+            <mpath href="#dict-chain"/>
+          </animateMotion>
+          <animate attributeName="opacity" dur="8s" repeatCount="indefinite" begin="7s"
+            values="0;0.9;0.9;0" keyTimes="0;0.05;0.92;1" calcMode="linear"/>
+        </circle>
+      </g>
+
+    </svg>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- FLOWS -->
+<section id="flows">
+  <div class="section-title">🔄 Flujos paso a paso</div>
+  <p class="section-sub">Qué ocurre exactamente desde que el usuario habla hasta que obtiene respuesta.</p>
+
+  <div class="flows-grid">
+
+    <!-- AI MODE -->
+    <div class="flow-card">
+      <div class="flow-card-header ai">🤖 Modo IA — Alt+Super+G</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">1</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Ctrl+Space (pulsación 1)</strong><p>talk2ai-keys lee /dev/input y llama a Handy.</p><code>handy --toggle-transcription</code></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">2</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Handy graba audio</strong><p>PipeWire → WAV en local. Pitido de inicio.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">3</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Ctrl+Space (pulsación 2)</strong><p>Handy para la grabación y transcribe (Whisper local ~1.2s).</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">4</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Handy guarda en SQLite + llama al handler</strong><p>El handler lee el modo = "ai" y sale inmediatamente (&lt;10ms).</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">5</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>talk2ai-daemon detecta nueva fila</strong><p>Polling SQLite cada 1s. Escribe "processing" en ai-state → tray anima el icono.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">6</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Driver IA — streaming</strong><p>Llama al script del driver activo con el texto. El CLI devuelve la respuesta en streaming por stdout.</p><code>~/.talk2ai/ia/&lt;driver&gt; "$prompt"</code></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">7</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>espeak-ng — TTS en streaming</strong><p>Cada frase completa se habla al instante. Sin esperar a la respuesta entera.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot ai">8</div></div>
+          <div class="step-body"><strong>Si hay enlaces — notificación KDE</strong><p>URLs marcadas con [ENLACE: url] generan una notificación con botón "Abrir" → xdg-open. También aparecen en la ventana debug.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DICTATE MODE -->
+    <div class="flow-card">
+      <div class="flow-card-header dict">⌨️ Modo Dictado — Alt+Super+H</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-line"><div class="step-dot dict">1</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Ctrl+Space (pulsación 1)</strong><p>talk2ai-keys detecta la tecla y activa la grabación en Handy.</p><code>handy --toggle-transcription</code></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot dict">2</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Habla con normalidad</strong><p>Handy graba. El foco sigue en tu ventana — puedes seguir usando el ratón.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot dict">3</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Ctrl+Space (pulsación 2)</strong><p>Handy para y transcribe (Whisper local ~1.2s).</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot dict">4</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Handy llama a talk2ai-handler</strong><p>El handler lee mode = "dictate" y lanza un subshell completamente desacoplado.</p><code>disown + &lt;/dev/null</code></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot dict">5</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>Handler sale — Handy libre (&lt;10ms)</strong><p>Handy no espera. No crashea. El subshell vive de forma independiente.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot dict">6</div><div class="step-connector"></div></div>
+          <div class="step-body"><strong>0.5s después — ydotool type</strong><p>Tiempo suficiente para que Handy libere el foco. ydotool inyecta el texto via /dev/uinput directamente en el kernel — sin portal KDE.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-line"><div class="step-dot dict">7</div></div>
+          <div class="step-body"><strong>Texto aparece en la ventana activa</strong><p>Editor, navegador, terminal — donde estuviera el cursor.</p></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- STATE FILES -->
+<section id="state">
+  <div class="section-title">📁 Estado compartido <span>~/.talk2ai/</span></div>
+  <p class="section-sub">Archivos de texto plano que coordinan todos los componentes. Sin base de datos, sin sockets propios.</p>
+
+  <div class="files-grid">
+
+    <div class="file-card">
+      <h4>📄 mode</h4>
+      <p>Modo activo del sistema.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: talk2ai-keys, tray</span>
+        <span class="rd">▶ Lee: daemon, handler, tray</span>
+        <span style="color:#888;font-size:.75rem">Valores: <code style="font-size:.75rem">ai</code> · <code style="font-size:.75rem">dictate</code></span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📄 driver</h4>
+      <p>Driver IA activo.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: tray</span>
+        <span class="rd">▶ Lee: daemon, tray</span>
+        <span style="color:#888;font-size:.75rem">Valores: <code style="font-size:.75rem">gemini</code> · <code style="font-size:.75rem">claude</code> · <code style="font-size:.75rem">ollama</code> · …</span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📄 ai-state</h4>
+      <p>Estado de procesamiento IA. Controla la animación de latido del tray.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: daemon</span>
+        <span class="rd">▶ Lee: tray (QFileSystemWatcher)</span>
+        <span style="color:#888;font-size:.75rem">Valores: <code style="font-size:.75rem">idle</code> · <code style="font-size:.75rem">processing</code></span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📄 model</h4>
+      <p>Nombre del modelo activo. Aparece en el tooltip del tray.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: daemon (al arrancar)</span>
+        <span class="rd">▶ Lee: tray</span>
+        <span style="color:#888;font-size:.75rem">Ej: gemini-2.5-flash-lite, gpt-4o, claude-opus…</span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📄 debug</h4>
+      <p>Flag de activación de la ventana debug. Su existencia activa el modo debug.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: tray (touch / unlink)</span>
+        <span class="rd">▶ Lee: daemon, handler</span>
+        <span style="color:#888;font-size:.75rem">Existe = debug ON · No existe = debug OFF</span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📄 debug.log</h4>
+      <p>Log de sesión Q&amp;A. Formato: <code style="font-size:.75rem">timestamp|tipo|texto</code></p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: daemon (Q/A/STAT/L), handler (D)</span>
+        <span class="rd">▶ Lee: tray (ventana debug)</span>
+        <span style="color:#888;font-size:.75rem">Tipos: Q · A · D · L · STAT · INFO · SEP</span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📄 voice-prompt.md</h4>
+      <p>Instrucciones TTS enviadas al modelo. Controla estilo de respuesta y manejo de URLs.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: usuario / instalador</span>
+        <span class="rd">▶ Lee: driver (TALK2AI_VOICE_PROMPT)</span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📂 ia/&lt;driver&gt;</h4>
+      <p>Script ejecutable del driver activo. Recibe el prompt y devuelve la respuesta en streaming.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Instala: daemon (desde repo)</span>
+        <span class="rd">▶ Ejecuta: daemon</span>
+        <span style="color:#888;font-size:.75rem">Contrato: stdin=$1 · stdout=stream · env=TALK2AI_*</span>
+      </div>
+    </div>
+
+    <div class="file-card">
+      <h4>📂 context/&lt;driver&gt;.md</h4>
+      <p>Personalidad y contexto persistente del driver activo.</p>
+      <div class="file-meta">
+        <span class="wr">✎ Escribe: usuario</span>
+        <span class="rd">▶ Lee: driver (TALK2AI_CONTEXT_FILE)</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- DRIVER CONTRACT -->
+<section id="driver">
+  <div class="section-title">🤖 Contrato del driver <span>cómo añadir un nuevo backend IA</span></div>
+  <p class="section-sub">Cualquier script ejecutable en <code style="font-size:.85rem;color:var(--cyan)">~/.talk2ai/ia/</code> puede ser un driver. El daemon es agnóstico al modelo y al proveedor.</p>
+
+  <div class="contract">
+    <div class="contract-header">~/.talk2ai/ia/mi-driver</div>
+    <pre><span class="cmt">#!/bin/bash  # o Python, Node, cualquier ejecutable</span>
+
+<span class="kw">Entrada</span>
+  <span class="val">$1</span>                      <span class="cmt">→ texto del usuario</span>
+
+<span class="kw">Entorno</span> (exportado por el daemon)
+  <span class="val">TALK2AI_MODEL</span>          <span class="cmt">→ modelo a usar  (ej: gemini-2.5-flash-lite, gpt-4o, claude-opus…)</span>
+  <span class="val">TALK2AI_VOICE_PROMPT</span>   <span class="cmt">→ ruta a instrucciones TTS</span>
+  <span class="val">TALK2AI_CONTEXT_FILE</span>   <span class="cmt">→ ruta a contexto de personalidad  (puede estar vacío)</span>
+
+<span class="kw">Salida</span>
+  <span class="val">stdout</span>                 <span class="cmt">→ texto plano en streaming, sin markdown</span>
+                         <span class="cmt">   URLs en formato: [ENLACE: https://...]</span>
+  <span class="val">stderr</span>                 <span class="cmt">→ mensaje de error si algo falla</span>
+
+<span class="kw">Exit code</span>
+  <span class="val">0</span>                      <span class="cmt">→ éxito</span>
+  <span class="val">≠ 0</span>                    <span class="cmt">→ error  →  daemon habla mensaje aleatorio + guarda en errors.log</span></pre>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- DEPENDENCIES -->
+<section id="deps">
+  <div class="section-title">📦 Dependencias del sistema</div>
+  <p class="section-sub">Todas instalables desde los repos de Arch / CachyOS.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Herramienta</th>
+        <th>Función</th>
+        <th>Usado en</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>handy</td>
+        <td>Speech-to-Text local con Whisper. Graba, transcribe y guarda en SQLite.</td>
+        <td><span class="tag tag-both">ambos</span></td>
+      </tr>
+      <tr>
+        <td>AI CLI driver</td>
+        <td>CLI del driver IA activo (Gemini, Claude, Codex, ollama…). Cualquier ejecutable en <code style="font-size:.75rem;color:var(--cyan)">~/.talk2ai/ia/</code> puede ser driver.</td>
+        <td><span class="tag tag-ai">IA</span></td>
+      </tr>
+      <tr>
+        <td>espeak-ng</td>
+        <td>Síntesis de voz (TTS) en español. Soporta SSML para pronunciar nombres propios.</td>
+        <td><span class="tag tag-ai">IA</span></td>
+      </tr>
+      <tr>
+        <td>ydotool + ydotoold</td>
+        <td>Inyección de teclado via /dev/uinput. Funciona en Wayland sin portal KDE.</td>
+        <td><span class="tag tag-dict">Dictado</span></td>
+      </tr>
+      <tr>
+        <td>python-evdev</td>
+        <td>Lectura directa de /dev/input para atajos globales (talk2ai-keys). Requiere grupo input.</td>
+        <td><span class="tag tag-both">ambos</span></td>
+      </tr>
+      <tr>
+        <td>python-pyqt6</td>
+        <td>Tray icon, ventana debug Q&amp;A y QFileSystemWatcher para actualizaciones en tiempo real.</td>
+        <td><span class="tag tag-ui">UI</span></td>
+      </tr>
+      <tr>
+        <td>notify-send</td>
+        <td>Notificaciones KDE con botón "Abrir" para los enlaces de las respuestas IA.</td>
+        <td><span class="tag tag-ai">IA</span></td>
+      </tr>
+      <tr>
+        <td>xdg-open</td>
+        <td>Abre URLs en el navegador por defecto al pulsar "Abrir" en la notificación.</td>
+        <td><span class="tag tag-ai">IA</span></td>
+      </tr>
+      <tr>
+        <td>sqlite3</td>
+        <td>Lectura directa de la BD de Handy para el polling del daemon.</td>
+        <td><span class="tag tag-ai">IA</span></td>
+      </tr>
+      <tr>
+        <td>xdotool</td>
+        <td>Fallback para X11 cuando ydotool no está disponible.</td>
+        <td><span class="tag tag-dict">Dictado</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  talk2ai · KDE Wayland · <a href="../ARQUITECTURA.md" style="color:var(--muted)">ver también ARQUITECTURA.md</a>
+</footer>
+
+<script>
+const MODES = {
+  ai:   { tabId: 'tab-ai',   cls: 'active-ai'   },
+  dict: { tabId: 'tab-dict', cls: 'active-dict'  },
+  all:  { tabId: 'tab-all',  cls: 'active-ai'    },
+};
+
+let current = 'ai';
+
+function setMode(mode) {
+  current = mode;
+
+  // Update tabs
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.remove('active-ai', 'active-dict');
+  });
+  const tab = document.getElementById(MODES[mode].tabId);
+  if (tab) tab.classList.add(MODES[mode].cls);
+
+  // Show/hide SVG groups
+  const showAi   = mode === 'ai'   || mode === 'all';
+  const showDict = mode === 'dict' || mode === 'all';
+
+  document.querySelectorAll('.mode-ai').forEach(el => {
+    el.style.opacity = showAi ? '1' : '0.08';
+  });
+  document.querySelectorAll('.mode-dict').forEach(el => {
+    el.style.opacity = showDict ? '1' : '0.08';
+  });
+}
+
+// Init
+setMode('ai');
+
+// Smooth scroll for nav links
+document.querySelectorAll('nav a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+</script>
+
+</body>
+</html>

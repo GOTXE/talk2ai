@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=talk2ai Tray
+Comment=Tray icon para talk2ai
+Exec=/home/gtx/.local/bin/talk2ai-tray
+Icon=audio-input-microphone
+Hidden=false
+NoDisplay=false
+X-KDE-autostart-condition=
