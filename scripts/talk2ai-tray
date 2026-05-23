@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QBrush,
                          QFont, QAction, QPainterPath, QTransform, QTextCursor,
                          QRadialGradient, QLinearGradient)
-from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QFileSystemWatcher, QByteArray
+from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QThread, QFileSystemWatcher, QByteArray
 from PyQt6.QtSvg import QSvgRenderer
 
 HANDY_DB           = Path.home() / ".local/share/com.pais.handy/history.db"
@@ -365,19 +365,18 @@ class StatusWorker(QObject):
         self.done.emit(check_status())
 
 
-class VersionWorker(QObject):
+class VersionWorker(QThread):
     done = pyqtSignal(str)  # tag más reciente, "" si falla
 
     def run(self):
         try:
-            import urllib.request
+            import urllib.request, json
             req = urllib.request.Request(
                 GITHUB_API_LATEST,
                 headers={"Accept": "application/vnd.github+json",
                          "User-Agent": "talk2ai-tray"},
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
-                import json
                 data = json.loads(resp.read())
                 self.done.emit(data.get("tag_name", ""))
         except Exception:
@@ -715,7 +714,7 @@ class TalkTray:
     def _async_version_check(self):
         self._version_worker = VersionWorker()
         self._version_worker.done.connect(self._on_version)
-        threading.Thread(target=self._version_worker.run, daemon=True).start()
+        self._version_worker.start()
 
     def _on_version(self, latest_tag: str):
         local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else ""
