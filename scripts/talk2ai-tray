@@ -462,6 +462,9 @@ class TalkTray:
         self.act_debug.setChecked(DEBUG_ENABLED_FILE.exists())
         self.act_debug.triggered.connect(self._toggle_debug)
 
+        act_prompt = self.menu.addAction("✏️   Editar prompt del driver…")
+        act_prompt.triggered.connect(self._edit_prompt)
+
         self.menu.addSeparator()
 
         self.act_handy = self.menu.addAction("▶  Abrir Handy")
@@ -528,6 +531,14 @@ class TalkTray:
             if self._debug_window:
                 self._debug_window.hide()
         self.act_debug.setChecked(checked)
+
+    def _edit_prompt(self):
+        driver = DRIVER_FILE.read_text().strip() if DRIVER_FILE.exists() else "gemini"
+        specific = TALK2AI_DIR / f"voice-prompt-{driver}.md"
+        target = specific if specific.exists() else TALK2AI_DIR / "voice-prompt.md"
+        if not target.exists():
+            target.write_text("")
+        subprocess.Popen(["xdg-open", str(target)])
 
     def _ensure_handy(self):
         def _do():
