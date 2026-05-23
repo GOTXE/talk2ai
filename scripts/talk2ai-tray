@@ -116,19 +116,9 @@ def get_driver() -> str:
 
 
 def _check_driver_ok(driver: str) -> tuple[str, bool]:
-    """Devuelve (etiqueta, ok) según el tipo de driver."""
     if driver == "ollama":
-        import urllib.request
-        try:
-            host = (OLLAMA_HOST_FILE.read_text().strip()
-                    if OLLAMA_HOST_FILE.exists()
-                    else os.environ.get('TALK2AI_OLLAMA_HOST', 'http://127.0.0.1:11434'))
-            urllib.request.urlopen(f'{host}/api/tags', timeout=3)
-            return "Ollama servidor", True
-        except Exception:
-            return "Ollama servidor", False
-    else:
-        return f"{driver} CLI", run(["which", driver]).returncode == 0
+        return "Ollama driver", (TALK2AI_DIR / "ia" / "ollama").exists()
+    return f"{driver} CLI", run(["which", driver]).returncode == 0
 
 
 def check_status():
