@@ -227,6 +227,10 @@ step "6/7  voice-prompt y contexto de personalidad"
 
 mkdir -p "$TALK2AI_DIR/context"
 
+# versión instalada (usada por el tray para mostrar actualizaciones)
+cp "$REPO_DIR/VERSION" "$TALK2AI_DIR/version"
+ok "version → $TALK2AI_DIR/version  ($(cat "$REPO_DIR/VERSION" | tr -d '\n'))"
+
 # voice-prompt genérico + específicos por driver
 cp "$REPO_DIR/config/voice-prompt.md" "$TALK2AI_DIR/voice-prompt.md"
 ok "voice-prompt.md → $TALK2AI_DIR/voice-prompt.md"
