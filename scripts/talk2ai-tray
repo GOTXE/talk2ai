@@ -424,11 +424,14 @@ class TalkTray:
             self._beat_timer.start()
 
         self._async_check()
-        self._async_version_check()
 
         self.timer = QTimer()
         self.timer.timeout.connect(self._async_check)
         self.timer.start(3000)
+
+        # Retrasamos el check de versión para que el event loop esté corriendo
+        # antes de que el QThread pueda emitir su señal
+        QTimer.singleShot(1500, self._async_version_check)
 
         self._version_timer = QTimer()
         self._version_timer.timeout.connect(self._async_version_check)
