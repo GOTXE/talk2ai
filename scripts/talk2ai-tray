@@ -713,9 +713,9 @@ class TalkTray:
         threading.Thread(target=worker.run, daemon=True).start()
 
     def _async_version_check(self):
-        worker = VersionWorker()
-        worker.done.connect(self._on_version)
-        threading.Thread(target=worker.run, daemon=True).start()
+        self._version_worker = VersionWorker()
+        self._version_worker.done.connect(self._on_version)
+        threading.Thread(target=self._version_worker.run, daemon=True).start()
 
     def _on_version(self, latest_tag: str):
         local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else ""
