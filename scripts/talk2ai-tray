@@ -705,13 +705,11 @@ class TalkTray:
             na.setEnabled(False)
             return
         self._ollama_menu.addSeparator()
-        lbl = self._ollama_menu.addAction("  Modelo:")
-        lbl.setEnabled(False)
         active = self._get_driver_model("ollama")
-        for name in models:
-            mark = "✓" if name == active else "   "
-            act = self._ollama_menu.addAction(f"  {mark}  {name}")
-            act.triggered.connect(lambda checked, m=name: self._set_driver_model("ollama", m))
+        lbl_model = self._ollama_menu.addAction(f"  Modelo: {active or '—'}")
+        lbl_model.setEnabled(False)
+        act_pick = self._ollama_menu.addAction("  📋  Seleccionar modelo…")
+        act_pick.triggered.connect(lambda: self._pick_ollama_model(models))
 
     def _change_ollama_host(self):
         if self._ask_ollama_host():
@@ -719,6 +717,21 @@ class TalkTray:
             loading = self._ollama_menu.addAction("  Cargando modelos…")
             loading.setEnabled(False)
             threading.Thread(target=self._fetch_ollama_models, daemon=True).start()
+
+    def _pick_ollama_model(self, models):
+        active = self._get_driver_model("ollama")
+        current_idx = models.index(active) if active in models else 0
+        model, ok = QInputDialog.getItem(
+            None,
+            "Seleccionar modelo Ollama",
+            "Modelo:",
+            models,
+            current_idx,
+            editable=False,
+        )
+        if ok and model:
+            self._set_driver_model("ollama", model)
+            self._populate_ollama_menu(models)
 
     def _get_driver_model(self, driver):
         f = TALK2AI_DIR / f"model-{driver}"
