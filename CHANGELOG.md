@@ -6,6 +6,17 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [1.3.0] — 2026-05-23
+
+### Añadido
+- **Versión instalada en el menú del tray**: muestra `v1.3.0 — Buscar actualizaciones…` al fondo del menú; el instalador escribe `~/.talk2ai/version` con la versión instalada
+- **Check de actualizaciones bajo demanda**: al hacer clic consulta la GitHub API (timeout 3s), actualiza el label y, si hay versión nueva, el item se vuelve clickable y abre la página de releases
+
+### Cambiado
+- El check de actualizaciones es **bajo demanda** (clic del usuario), no automático al arrancar — evita race conditions con el event loop de Qt durante el inicio
+
+---
+
 ## [1.2.0] — 2026-05-23
 
 ### Añadido
