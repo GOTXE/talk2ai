@@ -214,6 +214,22 @@ def get_driver() -> str:
         return "gemini"
 
 
+def _check_driver_ok(driver: str) -> tuple[str, bool]:
+    """Devuelve (etiqueta, ok) según el tipo de driver."""
+    if driver == "ollama":
+        import urllib.request
+        try:
+            host = (OLLAMA_HOST_FILE.read_text().strip()
+                    if OLLAMA_HOST_FILE.exists()
+                    else os.environ.get('TALK2AI_OLLAMA_HOST', 'http://127.0.0.1:11434'))
+            urllib.request.urlopen(f'{host}/api/tags', timeout=3)
+            return "Ollama servidor", True
+        except Exception:
+            return "Ollama servidor", False
+    else:
+        return f"{driver} CLI", run(["which", driver]).returncode == 0
+
+
 def check_status():
     shortcuts_ok = (
         run(["pgrep", "-f", "talk2ai-keys"]).returncode == 0
@@ -222,13 +238,13 @@ def check_status():
     )
     shortcuts_label = "talk2ai-keys" if IS_WAYLAND else "xbindkeys"
     driver = get_driver()
-    driver_label = f"{driver} CLI"
+    driver_label, driver_ok = _check_driver_ok(driver)
     handy_ok = run(["pgrep", "-x", "handy"]).returncode == 0
     return {
         "Servicio":      run(["systemctl", "--user", "is-active", SERVICE]).stdout.strip() == "active",
         shortcuts_label: shortcuts_ok,
         "Handy DB":      HANDY_DB.exists(),
-        driver_label:    run(["which", driver]).returncode == 0,
+        driver_label:    driver_ok,
         "espeak-ng":     run(["which", "espeak-ng"]).returncode == 0,
         "_handy_ok":     handy_ok,
     }
