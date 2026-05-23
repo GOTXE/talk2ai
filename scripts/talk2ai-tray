@@ -350,6 +350,7 @@ class TalkTray:
         self._beat_frame = 0
         self._debug_window = None
         self._build_menu()
+        threading.Thread(target=self._fetch_ollama_models, daemon=True).start()
         self.tray.setIcon(make_icon(get_mode(), get_driver(), False))
         self.tray.setContextMenu(self.menu)
         self.tray.show()
@@ -407,6 +408,11 @@ class TalkTray:
 
         act_gemini = self.menu.addAction("🌟  Gemini")
         act_gemini.triggered.connect(lambda: self._set_driver("gemini"))
+
+        self._ollama_menu = QMenu("🖥️  Ollama", self.menu)
+        self._loading_act = self._ollama_menu.addAction("  Cargando modelos…")
+        self._loading_act.setEnabled(False)
+        self.menu.addMenu(self._ollama_menu)
 
         self.menu.addSeparator()
 
@@ -515,6 +521,50 @@ class TalkTray:
             except subprocess.TimeoutExpired:
                 subprocess.run(["pkill", "-9", "-x", "handy"], capture_output=True)
         threading.Thread(target=_do, daemon=True).start()
+
+    def _fetch_ollama_models(self):
+        import json
+        import urllib.request
+        host = os.environ.get('TALK2AI_OLLAMA_HOST', 'http://20.0.0.110:11434')
+        try:
+            with urllib.request.urlopen(f'{host}/api/tags', timeout=5) as r:
+                data = json.loads(r.read())
+            models = [m['name'] for m in data.get('models', [])]
+        except Exception:
+            models = []
+        QTimer.singleShot(0, lambda: self._populate_ollama_menu(models))
+
+    def _populate_ollama_menu(self, models):
+        self._ollama_menu.clear()
+        act_select = self._ollama_menu.addAction("  Activar Ollama como driver")
+        act_select.triggered.connect(lambda: self._set_driver("ollama"))
+        if not models:
+            self._ollama_menu.addSeparator()
+            na = self._ollama_menu.addAction("  (servidor no disponible)")
+            na.setEnabled(False)
+            return
+        self._ollama_menu.addSeparator()
+        lbl = self._ollama_menu.addAction("  Modelo:")
+        lbl.setEnabled(False)
+        active = self._get_driver_model("ollama")
+        for name in models:
+            mark = "✓" if name == active else "   "
+            act = self._ollama_menu.addAction(f"  {mark}  {name}")
+            act.triggered.connect(lambda checked, m=name: self._set_driver_model("ollama", m))
+
+    def _get_driver_model(self, driver):
+        f = TALK2AI_DIR / f"model-{driver}"
+        try:
+            return f.read_text().strip()
+        except Exception:
+            defaults = {"gemini": "gemini-2.5-flash-lite", "ollama": "qwen3.5:2b"}
+            return defaults.get(driver, "")
+
+    def _set_driver_model(self, driver, model):
+        (TALK2AI_DIR / f"model-{driver}").write_text(model)
+        if get_driver() == driver:
+            MODEL_FILE.write_text(model)
+        threading.Thread(target=self._fetch_ollama_models, daemon=True).start()
 
     def _set_mode(self, mode):
         MODE_FILE.write_text(mode)

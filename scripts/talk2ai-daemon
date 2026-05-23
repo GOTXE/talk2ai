@@ -95,7 +95,13 @@ _run_driver() {
     fi
 
     local context_file="$TALK2AI_DIR/context/$driver.md"
-    local model="${DRIVER_MODELS[$driver]:-$AI_MODEL}"
+    local model_override_file="$TALK2AI_DIR/model-$driver"
+    local model
+    if [ -f "$model_override_file" ]; then
+        model=$(cat "$model_override_file")
+    else
+        model="${DRIVER_MODELS[$driver]:-$AI_MODEL}"
+    fi
     echo "$model" > "$MODEL_FILE"
     export TALK2AI_MODEL="$model"
     export TALK2AI_VOICE_PROMPT="$VOICE_PROMPT"
