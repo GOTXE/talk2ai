@@ -27,7 +27,10 @@ DEBUG_ENABLED_FILE = TALK2AI_DIR / "debug"
 DEBUG_LOG_FILE     = TALK2AI_DIR / "debug.log"
 MODEL_FILE         = TALK2AI_DIR / "model"
 OLLAMA_HOST_FILE   = TALK2AI_DIR / "ollama-host"
+VERSION_FILE       = TALK2AI_DIR / "version"
 SERVICE            = "talk2ai.service"
+GITHUB_API_LATEST  = "https://api.github.com/repos/GOTXE/talk2ai/releases/latest"
+GITHUB_RELEASES    = "https://github.com/GOTXE/talk2ai/releases"
 
 # Curva de latido: doble pulso rápido + pausa (escala relativa)
 HEARTBEAT_FRAMES = [1.0, 1.18, 1.0, 1.10, 1.0, 1.0, 1.0, 1.0]
@@ -362,6 +365,25 @@ class StatusWorker(QObject):
         self.done.emit(check_status())
 
 
+class VersionWorker(QObject):
+    done = pyqtSignal(str)  # tag más reciente, "" si falla
+
+    def run(self):
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                GITHUB_API_LATEST,
+                headers={"Accept": "application/vnd.github+json",
+                         "User-Agent": "talk2ai-tray"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                import json
+                data = json.loads(resp.read())
+                self.done.emit(data.get("tag_name", ""))
+        except Exception:
+            self.done.emit("")
+
+
 class TalkTray:
     def __init__(self, app):
         self.app = app
@@ -403,10 +425,15 @@ class TalkTray:
             self._beat_timer.start()
 
         self._async_check()
+        self._async_version_check()
 
         self.timer = QTimer()
         self.timer.timeout.connect(self._async_check)
         self.timer.start(3000)
+
+        self._version_timer = QTimer()
+        self._version_timer.timeout.connect(self._async_version_check)
+        self._version_timer.start(3_600_000)  # cada hora
 
     def _build_menu(self):
         self.menu = QMenu()
@@ -479,6 +506,11 @@ class TalkTray:
         session = "Wayland" if IS_WAYLAND else "X11"
         lbl_session = self.menu.addAction(f"  Sesión: {session}")
         lbl_session.setEnabled(False)
+
+        self.menu.addSeparator()
+
+        self.act_version = self.menu.addAction("  Versión: —")
+        self.act_version.setEnabled(False)
 
         self.menu.addSeparator()
 
@@ -679,6 +711,35 @@ class TalkTray:
         worker = StatusWorker()
         worker.done.connect(self._on_status)
         threading.Thread(target=worker.run, daemon=True).start()
+
+    def _async_version_check(self):
+        worker = VersionWorker()
+        worker.done.connect(self._on_version)
+        threading.Thread(target=worker.run, daemon=True).start()
+
+    def _on_version(self, latest_tag: str):
+        local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else ""
+        local_tag = f"v{local}" if local and not local.startswith("v") else local
+        if not local_tag:
+            self.act_version.setText("  Versión: desconocida")
+            return
+        if not latest_tag:
+            self.act_version.setText(f"  {local_tag}")
+            self.act_version.setEnabled(False)
+            return
+        if latest_tag == local_tag:
+            self.act_version.setText(f"  {local_tag}  ✓")
+            self.act_version.setEnabled(False)
+        else:
+            self.act_version.setText(f"  {local_tag}  →  {latest_tag}  ↑")
+            self.act_version.setEnabled(True)
+            try:
+                self.act_version.triggered.disconnect()
+            except Exception:
+                pass
+            self.act_version.triggered.connect(
+                lambda: subprocess.Popen(["xdg-open", GITHUB_RELEASES])
+            )
 
     def _on_status(self, status):
         self._checking = False
