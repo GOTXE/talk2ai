@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QBrush,
                          QFont, QAction, QPainterPath, QTransform, QTextCursor,
                          QRadialGradient, QLinearGradient)
-from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QFileSystemWatcher, QByteArray
+from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QThread, QFileSystemWatcher, QByteArray
 from PyQt6.QtSvg import QSvgRenderer
 
 HANDY_DB           = Path.home() / ".local/share/com.pais.handy/history.db"
@@ -27,7 +27,10 @@ DEBUG_ENABLED_FILE = TALK2AI_DIR / "debug"
 DEBUG_LOG_FILE     = TALK2AI_DIR / "debug.log"
 MODEL_FILE         = TALK2AI_DIR / "model"
 OLLAMA_HOST_FILE   = TALK2AI_DIR / "ollama-host"
+VERSION_FILE       = TALK2AI_DIR / "version"
 SERVICE            = "talk2ai.service"
+GITHUB_API_LATEST  = "https://api.github.com/repos/GOTXE/talk2ai/releases/latest"
+GITHUB_RELEASES    = "https://github.com/GOTXE/talk2ai/releases"
 
 # Curva de latido: doble pulso rápido + pausa (escala relativa)
 HEARTBEAT_FRAMES = [1.0, 1.18, 1.0, 1.10, 1.0, 1.0, 1.0, 1.0]
@@ -362,6 +365,7 @@ class StatusWorker(QObject):
         self.done.emit(check_status())
 
 
+
 class TalkTray:
     def __init__(self, app):
         self.app = app
@@ -479,6 +483,12 @@ class TalkTray:
         session = "Wayland" if IS_WAYLAND else "X11"
         lbl_session = self.menu.addAction(f"  Sesión: {session}")
         lbl_session.setEnabled(False)
+
+        self.menu.addSeparator()
+
+        local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else "?"
+        self.act_version = self.menu.addAction(f"  v{local}  —  Buscar actualizaciones…")
+        self.act_version.triggered.connect(self._check_for_updates)
 
         self.menu.addSeparator()
 
@@ -679,6 +689,42 @@ class TalkTray:
         worker = StatusWorker()
         worker.done.connect(self._on_status)
         threading.Thread(target=worker.run, daemon=True).start()
+
+    def _check_for_updates(self):
+        local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else "?"
+        local_tag = f"v{local}" if not local.startswith("v") else local
+        self.act_version.setText(f"  {local_tag}  —  Comprobando…")
+        self.act_version.setEnabled(False)
+        def _do():
+            try:
+                import urllib.request, json
+                req = urllib.request.Request(
+                    GITHUB_API_LATEST,
+                    headers={"Accept": "application/vnd.github+json",
+                             "User-Agent": "talk2ai-tray"},
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    latest = json.loads(resp.read()).get("tag_name", "")
+            except Exception:
+                latest = ""
+            QTimer.singleShot(0, lambda: self._on_update_result(local_tag, latest))
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_update_result(self, local_tag: str, latest: str):
+        if not latest:
+            self.act_version.setText(f"  {local_tag}  —  sin conexión")
+        elif latest == local_tag:
+            self.act_version.setText(f"  {local_tag}  ✓  al día")
+        else:
+            self.act_version.setText(f"  {local_tag}  →  {latest}  ↑  (clic para abrir)")
+            try:
+                self.act_version.triggered.disconnect()
+            except Exception:
+                pass
+            self.act_version.triggered.connect(
+                lambda: subprocess.Popen(["xdg-open", GITHUB_RELEASES])
+            )
+        self.act_version.setEnabled(True)
 
     def _on_status(self, status):
         self._checking = False
