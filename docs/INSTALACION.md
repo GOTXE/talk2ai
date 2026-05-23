@@ -97,7 +97,7 @@ El instalador realiza estos pasos:
 4. Copia los scripts a `~/.local/bin/` **y los drivers** a `~/.talk2ai/ia/`
 5. Instala el servicio systemd y el autostart del tray
 6. Instala `voice-prompt.md` y ofrece instalar el contexto de personalidad
-7. Verifica que todo esté correcto (scripts, drivers, servicio, tray) y muestra un resumen
+7. Verifica que todo esté correcto (scripts, drivers, servicio, tray) y muestra un resumen; escribe `~/.talk2ai/version` con la versión instalada
 
 ---
 
