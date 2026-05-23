@@ -104,7 +104,12 @@ _run_driver() {
     fi
     echo "$model" > "$MODEL_FILE"
     export TALK2AI_MODEL="$model"
-    export TALK2AI_VOICE_PROMPT="$VOICE_PROMPT"
+    local driver_vp="$TALK2AI_DIR/voice-prompt-$driver.md"
+    if [ -f "$driver_vp" ]; then
+        export TALK2AI_VOICE_PROMPT="$driver_vp"
+    else
+        export TALK2AI_VOICE_PROMPT="$VOICE_PROMPT"
+    fi
     export TALK2AI_CONTEXT_FILE=""
     [ -f "$context_file" ] && export TALK2AI_CONTEXT_FILE="$context_file"
     local ollama_host_file="$TALK2AI_DIR/ollama-host"
@@ -187,9 +192,16 @@ main() {
         _T_START=$(date +%s%3N)
         _T_FIRST_TOKEN=0
         if [ -f "$DEBUG_FILE" ]; then
+            _dbg_driver=$(cat "$DRIVER_FILE" 2>/dev/null || echo "gemini")
+            _dbg_model_file="$TALK2AI_DIR/model-$_dbg_driver"
+            if [ -f "$_dbg_model_file" ]; then
+                _dbg_model=$(cat "$_dbg_model_file")
+            else
+                _dbg_model="${DRIVER_MODELS[$_dbg_driver]:-$AI_MODEL}"
+            fi
             {
                 echo "$_T_START|SEP|"
-                echo "$_T_START|INFO|Modelo: $AI_MODEL  ·  Driver: $(cat "$DRIVER_FILE" 2>/dev/null || echo "gemini")"
+                echo "$_T_START|INFO|Modelo: $_dbg_model  ·  Driver: $_dbg_driver"
                 echo "$_T_START|Q|$TRANSCRIPTION"
             } >> "$DEBUG_LOG"
         fi
