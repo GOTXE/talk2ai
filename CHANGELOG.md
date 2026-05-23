@@ -6,6 +6,15 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [1.3.1] — 2026-05-23
+
+### Corregido
+- **Check de actualizaciones bloqueado en "Comprobando…"**: `QTimer.singleShot(0, ...)` llamado desde `threading.Thread` no es fiable en PyQt6 para volver al hilo principal. Reemplazado por `UpdateSignal(QObject)` con `pyqtSignal`, que Qt enruta correctamente al event loop
+- **Botón "Ver releases" de la notificación sin efecto**: formato incorrecto de acción (`--action "open:…"`); corregido a `-A "open=Ver releases"` según la especificación de `notify-send`
+- El resultado del check ahora aparece siempre como notificación del sistema (sin necesidad de reabrir el menú)
+
+---
+
 ## [1.3.0] — 2026-05-23
 
 ### Añadido
