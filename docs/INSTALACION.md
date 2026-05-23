@@ -39,7 +39,7 @@ mv Handy_*.AppImage ~/.local/bin/handy
 
 ## Instalar el driver de IA
 
-talk2ai usa un sistema de drivers intercambiables. El driver por defecto es **Gemini CLI**.
+talk2ai usa un sistema de drivers intercambiables. El instalador despliega automáticamente todos los drivers incluidos en el repo (`gemini` y `ollama`).
 
 ### Gemini CLI (por defecto)
 
@@ -50,6 +50,15 @@ npm install -g @google/gemini-cli
 gemini auth login
 echo "hola" | gemini   # verificar que funciona
 ```
+
+### Ollama (opcional, modelos locales o remotos)
+
+El driver Ollama se instala automáticamente. Solo necesitas un servidor Ollama accesible (local o remoto):
+
+- **Local:** `http://127.0.0.1:11434` (valor por defecto)
+- **Remoto:** configura el host desde el tray → menú Ollama → *Cambiar servidor…*
+
+El modelo por defecto es `qwen3.5:2b`. Puedes cambiarlo desde el tray → Ollama → *Seleccionar modelo…*
 
 ### Otros drivers
 
@@ -69,13 +78,14 @@ bash install.sh
 
 El instalador realiza estos pasos:
 
+0. Detiene procesos previos y limpia el lock del tray
 1. Instala dependencias del sistema que falten (`xdotool`, `ydotool`, `espeak-ng`, etc.)
-2. Activa `ydotool.service` y añade el usuario al grupo `input` (Wayland)
-3. Configura Handy automáticamente: `paste_method=external_script`, ruta del handler, atajo interno desactivado
-4. Copia los scripts a `~/.local/bin/`
+2. Configura Handy automáticamente: `paste_method=external_script`, ruta del handler, atajo interno desactivado
+3. Informa sobre los drivers disponibles (Gemini y Ollama)
+4. Copia los scripts a `~/.local/bin/` **y los drivers** a `~/.talk2ai/ia/`
 5. Instala el servicio systemd y el autostart del tray
-6. Arranca el servicio y el tray
-7. Muestra una notificación de finalización
+6. Instala `voice-prompt.md` y ofrece instalar el contexto de personalidad
+7. Verifica que todo esté correcto (scripts, drivers, servicio, tray) y muestra un resumen
 
 ---
 
@@ -184,6 +194,20 @@ cat ~/.talk2ai/driver
 ```
 
 Prueba el driver directamente (ver sección Verificar la instalación).
+
+### Ollama no responde
+
+```bash
+cat ~/.talk2ai/ollama-host    # host configurado
+# Probar conectividad
+curl $(cat ~/.talk2ai/ollama-host)/api/tags
+```
+
+Si el host es incorrecto, cámbialo desde el tray → Ollama → *Cambiar servidor…*, o directamente:
+
+```bash
+echo "http://IP:11434" > ~/.talk2ai/ollama-host
+```
 
 ### No hay audio
 
