@@ -693,7 +693,7 @@ class TalkTray:
     def _check_for_updates(self):
         local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else "?"
         local_tag = f"v{local}" if not local.startswith("v") else local
-        self.act_version.setText(f"  v{local}  —  Comprobando…")
+        self.act_version.setText(f"  {local_tag}  —  Comprobando…")
         self.act_version.setEnabled(False)
         def _do():
             try:
@@ -703,7 +703,7 @@ class TalkTray:
                     headers={"Accept": "application/vnd.github+json",
                              "User-Agent": "talk2ai-tray"},
                 )
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                with urllib.request.urlopen(req, timeout=3) as resp:
                     latest = json.loads(resp.read()).get("tag_name", "")
             except Exception:
                 latest = ""
