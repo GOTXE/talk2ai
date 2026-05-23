@@ -365,23 +365,6 @@ class StatusWorker(QObject):
         self.done.emit(check_status())
 
 
-class VersionWorker(QThread):
-    done = pyqtSignal(str)  # tag más reciente, "" si falla
-
-    def run(self):
-        try:
-            import urllib.request, json
-            req = urllib.request.Request(
-                GITHUB_API_LATEST,
-                headers={"Accept": "application/vnd.github+json",
-                         "User-Agent": "talk2ai-tray"},
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read())
-                self.done.emit(data.get("tag_name", ""))
-        except Exception:
-            self.done.emit("")
-
 
 class TalkTray:
     def __init__(self, app):
@@ -428,14 +411,6 @@ class TalkTray:
         self.timer = QTimer()
         self.timer.timeout.connect(self._async_check)
         self.timer.start(3000)
-
-        # Retrasamos el check de versión para que el event loop esté corriendo
-        # antes de que el QThread pueda emitir su señal
-        QTimer.singleShot(1500, self._async_version_check)
-
-        self._version_timer = QTimer()
-        self._version_timer.timeout.connect(self._async_version_check)
-        self._version_timer.start(3_600_000)  # cada hora
 
     def _build_menu(self):
         self.menu = QMenu()
@@ -511,8 +486,9 @@ class TalkTray:
 
         self.menu.addSeparator()
 
-        self.act_version = self.menu.addAction("  Versión: —")
-        self.act_version.setEnabled(False)
+        local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else "?"
+        self.act_version = self.menu.addAction(f"  v{local}  —  Buscar actualizaciones…")
+        self.act_version.triggered.connect(self._check_for_updates)
 
         self.menu.addSeparator()
 
@@ -714,27 +690,33 @@ class TalkTray:
         worker.done.connect(self._on_status)
         threading.Thread(target=worker.run, daemon=True).start()
 
-    def _async_version_check(self):
-        self._version_worker = VersionWorker()
-        self._version_worker.done.connect(self._on_version)
-        self._version_worker.start()
+    def _check_for_updates(self):
+        local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else "?"
+        local_tag = f"v{local}" if not local.startswith("v") else local
+        self.act_version.setText(f"  v{local}  —  Comprobando…")
+        self.act_version.setEnabled(False)
+        def _do():
+            try:
+                import urllib.request, json
+                req = urllib.request.Request(
+                    GITHUB_API_LATEST,
+                    headers={"Accept": "application/vnd.github+json",
+                             "User-Agent": "talk2ai-tray"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    latest = json.loads(resp.read()).get("tag_name", "")
+            except Exception:
+                latest = ""
+            QTimer.singleShot(0, lambda: self._on_update_result(local_tag, latest))
+        threading.Thread(target=_do, daemon=True).start()
 
-    def _on_version(self, latest_tag: str):
-        local = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else ""
-        local_tag = f"v{local}" if local and not local.startswith("v") else local
-        if not local_tag:
-            self.act_version.setText("  Versión: desconocida")
-            return
-        if not latest_tag:
-            self.act_version.setText(f"  {local_tag}")
-            self.act_version.setEnabled(False)
-            return
-        if latest_tag == local_tag:
-            self.act_version.setText(f"  {local_tag}  ✓")
-            self.act_version.setEnabled(False)
+    def _on_update_result(self, local_tag: str, latest: str):
+        if not latest:
+            self.act_version.setText(f"  {local_tag}  —  sin conexión")
+        elif latest == local_tag:
+            self.act_version.setText(f"  {local_tag}  ✓  al día")
         else:
-            self.act_version.setText(f"  {local_tag}  →  {latest_tag}  ↑")
-            self.act_version.setEnabled(True)
+            self.act_version.setText(f"  {local_tag}  →  {latest}  ↑  (clic para abrir)")
             try:
                 self.act_version.triggered.disconnect()
             except Exception:
@@ -742,6 +724,7 @@ class TalkTray:
             self.act_version.triggered.connect(
                 lambda: subprocess.Popen(["xdg-open", GITHUB_RELEASES])
             )
+        self.act_version.setEnabled(True)
 
     def _on_status(self, status):
         self._checking = False
