@@ -697,16 +697,14 @@ class TalkTray:
         act_change = self._ollama_menu.addAction("  ⚙️  Cambiar servidor…")
         act_change.triggered.connect(self._change_ollama_host)
         self._ollama_menu.addSeparator()
-        act_select = self._ollama_menu.addAction("  ▶  Activar Ollama como driver")
-        act_select.triggered.connect(lambda: self._set_driver("ollama"))
         if not models:
-            self._ollama_menu.addSeparator()
             na = self._ollama_menu.addAction("  ⚠  Servidor no disponible")
             na.setEnabled(False)
             return
-        self._ollama_menu.addSeparator()
         active = self._get_driver_model("ollama")
-        lbl_model = self._ollama_menu.addAction(f"  Modelo: {active or '—'}")
+        is_active_driver = get_driver() == "ollama"
+        driver_mark = "✓ " if is_active_driver else ""
+        lbl_model = self._ollama_menu.addAction(f"  {driver_mark}Modelo: {active or '—'}")
         lbl_model.setEnabled(False)
         act_pick = self._ollama_menu.addAction("  📋  Seleccionar modelo…")
         act_pick.triggered.connect(lambda: self._pick_ollama_model(models))
@@ -731,6 +729,7 @@ class TalkTray:
         )
         if ok and model:
             self._set_driver_model("ollama", model)
+            self._set_driver("ollama")
             self._populate_ollama_menu(models)
 
     def _get_driver_model(self, driver):
