@@ -107,7 +107,12 @@ _run_driver() {
     export TALK2AI_VOICE_PROMPT="$VOICE_PROMPT"
     export TALK2AI_CONTEXT_FILE=""
     [ -f "$context_file" ] && export TALK2AI_CONTEXT_FILE="$context_file"
-    export TALK2AI_OLLAMA_HOST="${TALK2AI_OLLAMA_HOST:-http://20.0.0.110:11434}"
+    local ollama_host_file="$TALK2AI_DIR/ollama-host"
+    if [ -f "$ollama_host_file" ]; then
+        export TALK2AI_OLLAMA_HOST=$(cat "$ollama_host_file")
+    else
+        export TALK2AI_OLLAMA_HOST="${TALK2AI_OLLAMA_HOST:-http://127.0.0.1:11434}"
+    fi
 
     "$driver_script" "$prompt" 2>"$_err_tmp"
 }

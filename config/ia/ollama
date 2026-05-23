@@ -6,7 +6,9 @@ import json
 import os
 import urllib.request
 
-host  = os.environ.get('TALK2AI_OLLAMA_HOST', 'http://20.0.0.110:11434')
+_host_file = os.path.expanduser('~/.talk2ai/ollama-host')
+host = (open(_host_file).read().strip() if os.path.isfile(_host_file)
+        else os.environ.get('TALK2AI_OLLAMA_HOST', 'http://127.0.0.1:11434'))
 model = os.environ.get('TALK2AI_MODEL', 'qwen3.5:2b')
 prompt = sys.argv[1] if len(sys.argv) > 1 else ''
 

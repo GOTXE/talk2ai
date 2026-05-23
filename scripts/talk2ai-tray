@@ -10,7 +10,8 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
                               QWidget, QVBoxLayout, QHBoxLayout,
-                              QTextEdit, QTextBrowser, QPushButton)
+                              QTextEdit, QTextBrowser, QPushButton,
+                              QInputDialog, QMessageBox)
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QBrush,
                          QFont, QAction, QPainterPath, QTransform, QTextCursor,
                          QRadialGradient, QLinearGradient)
@@ -25,6 +26,7 @@ STATE_FILE         = TALK2AI_DIR / "ai-state"
 DEBUG_ENABLED_FILE = TALK2AI_DIR / "debug"
 DEBUG_LOG_FILE     = TALK2AI_DIR / "debug.log"
 MODEL_FILE         = TALK2AI_DIR / "model"
+OLLAMA_HOST_FILE   = TALK2AI_DIR / "ollama-host"
 SERVICE            = "talk2ai.service"
 
 # Curva de latido: doble pulso rápido + pausa (escala relativa)
@@ -523,7 +525,35 @@ class TalkTray:
                 subprocess.run(["pkill", "-9", "-x", "handy"], capture_output=True)
         threading.Thread(target=_do, daemon=True).start()
 
+    def _get_ollama_host(self) -> str:
+        try:
+            return OLLAMA_HOST_FILE.read_text().strip()
+        except Exception:
+            return os.environ.get('TALK2AI_OLLAMA_HOST', 'http://127.0.0.1:11434')
+
+    def _ask_ollama_host(self) -> bool:
+        """Muestra un diálogo para introducir la URL del servidor Ollama.
+        Devuelve True si el usuario confirmó, False si canceló."""
+        current = self._get_ollama_host()
+        url, ok = QInputDialog.getText(
+            None,
+            "Servidor Ollama",
+            "URL del servidor Ollama\n(por defecto local: http://127.0.0.1:11434)",
+            text=current,
+        )
+        if not ok or not url.strip():
+            return False
+        url = url.strip().rstrip('/')
+        if not url.startswith('http'):
+            url = 'http://' + url
+        OLLAMA_HOST_FILE.write_text(url)
+        self._ollama_models_cache = None
+        return True
+
     def _on_ollama_menu_show(self):
+        if not OLLAMA_HOST_FILE.exists():
+            if not self._ask_ollama_host():
+                return
         if self._ollama_models_cache is not None:
             self._populate_ollama_menu(self._ollama_models_cache)
         else:
@@ -535,7 +565,7 @@ class TalkTray:
     def _fetch_ollama_models(self):
         import json
         import urllib.request
-        host = os.environ.get('TALK2AI_OLLAMA_HOST', 'http://20.0.0.110:11434')
+        host = self._get_ollama_host()
         try:
             with urllib.request.urlopen(f'{host}/api/tags', timeout=5) as r:
                 data = json.loads(r.read())
@@ -547,11 +577,17 @@ class TalkTray:
 
     def _populate_ollama_menu(self, models):
         self._ollama_menu.clear()
-        act_select = self._ollama_menu.addAction("  Activar Ollama como driver")
+        host = self._get_ollama_host()
+        lbl_host = self._ollama_menu.addAction(f"  🖥️  {host}")
+        lbl_host.setEnabled(False)
+        act_change = self._ollama_menu.addAction("  ⚙️  Cambiar servidor…")
+        act_change.triggered.connect(self._change_ollama_host)
+        self._ollama_menu.addSeparator()
+        act_select = self._ollama_menu.addAction("  ▶  Activar Ollama como driver")
         act_select.triggered.connect(lambda: self._set_driver("ollama"))
         if not models:
             self._ollama_menu.addSeparator()
-            na = self._ollama_menu.addAction("  (servidor no disponible)")
+            na = self._ollama_menu.addAction("  ⚠  Servidor no disponible")
             na.setEnabled(False)
             return
         self._ollama_menu.addSeparator()
@@ -562,6 +598,13 @@ class TalkTray:
             mark = "✓" if name == active else "   "
             act = self._ollama_menu.addAction(f"  {mark}  {name}")
             act.triggered.connect(lambda checked, m=name: self._set_driver_model("ollama", m))
+
+    def _change_ollama_host(self):
+        if self._ask_ollama_host():
+            self._ollama_menu.clear()
+            loading = self._ollama_menu.addAction("  Cargando modelos…")
+            loading.setEnabled(False)
+            threading.Thread(target=self._fetch_ollama_models, daemon=True).start()
 
     def _get_driver_model(self, driver):
         f = TALK2AI_DIR / f"model-{driver}"
