@@ -6,6 +6,20 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [1.2.0] — 2026-05-23
+
+### Añadido
+- **Voice-prompt por driver**: el daemon busca `~/.talk2ai/voice-prompt-<driver>.md` antes del genérico; si no existe, usa `voice-prompt.md` como fallback
+- **`config/voice-prompt-ollama.md`**: prompt sin instrucción de enlaces (los modelos offline alucinan URLs)
+- **Tray → "✏️ Editar prompt del driver…"**: abre con `xdg-open` el voice-prompt activo del driver actual para editarlo directamente; el cambio se aplica en la siguiente consulta sin reiniciar
+- El instalador copia automáticamente todos los `config/voice-prompt-*.md` a `~/.talk2ai/`
+
+### Cambiado
+- `voice-prompt.md` genérico: añadida restricción explícita de no inventar URLs
+- `TALK2AI_VOICE_PROMPT` ahora apunta al fichero específico del driver cuando existe
+
+---
+
 ## [1.1.0] — 2026-05-23
 
 ### Añadido
