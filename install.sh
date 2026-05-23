@@ -35,17 +35,18 @@ echo -e "${BOLD}╚════════════════════�
 
 # ── Detener procesos previos ───────────────────────────────────────────────────
 
-step "0/6  Detener procesos existentes"
+step "0/7  Detener procesos existentes"
 
 systemctl --user stop talk2ai.service 2>/dev/null && ok "Servicio detenido" || true
 pkill -f "talk2ai-tray"  2>/dev/null && ok "Tray detenido"    || true
 pkill -f "talk2ai-keys"  2>/dev/null && ok "Keys detenido"    || true
 pkill -f "talk2ai-daemon" 2>/dev/null && ok "Daemon detenido" || true
 sleep 1
+rm -f "$TALK2AI_DIR/tray.lock" && true
 
 # ── Detectar gestor de paquetes ───────────────────────────────────────────────
 
-step "1/6  Dependencias del sistema"
+step "1/7  Dependencias del sistema"
 
 if command -v pacman &>/dev/null; then
     PKG_MANAGER="pacman"
@@ -105,7 +106,7 @@ fi
 
 # ── Comprobar y configurar Handy ─────────────────────────────────────────────
 
-step "2/6  Comprobar y configurar Handy"
+step "2/7  Comprobar y configurar Handy"
 
 HANDY_SETTINGS="$HOME/.local/share/com.pais.handy/settings_store.json"
 
@@ -146,7 +147,7 @@ fi
 
 # ── Comprobar driver de IA ────────────────────────────────────────────────────
 
-step "3/6  Comprobar driver de IA"
+step "3/7  Comprobar drivers de IA"
 
 if command -v gemini &>/dev/null; then
     ok "Gemini CLI encontrado: $(which gemini)"
@@ -156,17 +157,32 @@ else
     warn "Luego autentícate:  gemini auth login"
 fi
 
+if [[ -f "$TALK2AI_DIR/ollama-host" ]]; then
+    ok "Ollama configurado: $(cat "$TALK2AI_DIR/ollama-host")"
+else
+    info "Ollama (opcional): si tienes un servidor Ollama, configúralo desde"
+    info "  el menú del tray → Ollama → Cambiar servidor…"
+fi
+
 # ── Scripts ───────────────────────────────────────────────────────────────────
 
-step "4/6  Instalar scripts"
+step "4/7  Instalar scripts y drivers"
 
-mkdir -p "$BIN_DIR"
+mkdir -p "$BIN_DIR" "$TALK2AI_DIR/ia"
 
 SCRIPTS=(talk2ai-daemon talk2ai-handler talk2ai-tray talk2ai-keys talk2ai-control)
 for s in "${SCRIPTS[@]}"; do
     cp "$REPO_DIR/scripts/$s" "$BIN_DIR/$s"
     chmod +x "$BIN_DIR/$s"
     ok "$s → $BIN_DIR/$s"
+done
+
+# Drivers de IA
+for driver_src in "$REPO_DIR/config/ia/"*; do
+    driver_name="$(basename "$driver_src")"
+    cp "$driver_src" "$TALK2AI_DIR/ia/$driver_name"
+    chmod +x "$TALK2AI_DIR/ia/$driver_name"
+    ok "driver $driver_name → $TALK2AI_DIR/ia/$driver_name"
 done
 
 # Asegurar que ~/.local/bin está en PATH
@@ -177,7 +193,7 @@ fi
 
 # ── Servicio systemd y autostart ──────────────────────────────────────────────
 
-step "5/6  Configurar servicio systemd"
+step "5/7  Configurar servicio systemd"
 
 mkdir -p "$SYSTEMD_DIR" "$AUTOSTART_DIR"
 
@@ -207,9 +223,13 @@ fi
 
 # ── Contexto de personalidad (opcional) ──────────────────────────────────────
 
-step "6/6  Contexto de personalidad (opcional)"
+step "6/7  voice-prompt y contexto de personalidad"
 
 mkdir -p "$TALK2AI_DIR/context"
+
+# voice-prompt siempre se instala (no contiene datos personales)
+cp "$REPO_DIR/config/voice-prompt.md" "$TALK2AI_DIR/voice-prompt.md"
+ok "voice-prompt.md → $TALK2AI_DIR/voice-prompt.md"
 
 if [[ ! -f "$TALK2AI_DIR/context/gemini.md" ]]; then
     read -r -p "  ¿Instalar contexto de personalidad por defecto? [s/N] " resp
@@ -224,14 +244,54 @@ else
     ok "Contexto ya existente, no se sobreescribe"
 fi
 
-# ── Lanzar tray ──────────────────────────────────────────────────────────────
+# ── Verificación final ────────────────────────────────────────────────────────
 
-if command -v "$BIN_DIR/talk2ai-tray" &>/dev/null; then
+step "7/7  Verificación"
+
+# Scripts
+all_ok=true
+for s in "${SCRIPTS[@]}"; do
+    if [[ -x "$BIN_DIR/$s" ]]; then
+        ok "$s instalado"
+    else
+        err "$s FALTA"
+        all_ok=false
+    fi
+done
+
+# Drivers
+for driver_src in "$REPO_DIR/config/ia/"*; do
+    driver_name="$(basename "$driver_src")"
+    if [[ -x "$TALK2AI_DIR/ia/$driver_name" ]]; then
+        ok "driver $driver_name instalado"
+    else
+        err "driver $driver_name FALTA"
+        all_ok=false
+    fi
+done
+
+# Systemd
+if systemctl --user is-active talk2ai.service &>/dev/null; then
+    ok "talk2ai.service activo"
+else
+    err "talk2ai.service NO activo — revisa: journalctl --user -u talk2ai.service -n 30"
+    all_ok=false
+fi
+
+# Lanzar tray
+if [[ -x "$BIN_DIR/talk2ai-tray" ]]; then
     nohup "$BIN_DIR/talk2ai-tray" &>/dev/null &
     disown
     sleep 1
-    pgrep -f talk2ai-tray &>/dev/null && ok "Tray lanzado" || warn "Tray no pudo arrancar"
+    if pgrep -f talk2ai-tray &>/dev/null; then
+        ok "Tray lanzado"
+    else
+        warn "Tray no pudo arrancar — prueba: talk2ai-tray"
+        all_ok=false
+    fi
 fi
+
+$all_ok && ok "Todo OK" || warn "Algunas comprobaciones fallaron (ver arriba)"
 
 # ── Resumen ───────────────────────────────────────────────────────────────────
 

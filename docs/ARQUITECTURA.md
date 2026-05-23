@@ -160,6 +160,8 @@
   ├── voice-prompt.md  ← instrucciones TTS para el modelo
   ├── errors.log       ← respuestas vacías / errores del driver
   ├── tray.lock        ← flock instancia única del tray
+  ├── ollama-host      ← URL del servidor Ollama (ej: http://20.0.0.110:11434)
+  ├── model-<driver>   ← modelo persistente por driver (ej: model-ollama)
   ├── context/
   │     └── <driver>.md  ← personalidad / contexto persistente por driver
   └── ia/
@@ -179,6 +181,7 @@ Entorno:
   TALK2AI_MODEL          modelo a usar (definido por el daemon al arrancar)
   TALK2AI_VOICE_PROMPT   ruta a instrucciones TTS
   TALK2AI_CONTEXT_FILE   ruta al contexto de personalidad (opcional)
+  TALK2AI_OLLAMA_HOST    URL base del servidor Ollama (solo driver ollama)
 
 Salida:    stdout  →  texto plano en streaming, sin markdown
            stderr  →  mensaje de error si algo falla
@@ -186,6 +189,13 @@ Salida:    stdout  →  texto plano en streaming, sin markdown
 Exit:      0  →  éxito
            ≠0 →  error  (daemon lo registra en errors.log)
 ```
+
+### Drivers incluidos
+
+| Driver  | Fichero              | Requisito                              |
+|---------|----------------------|----------------------------------------|
+| gemini  | `config/ia/gemini`   | Gemini CLI (`npm install -g @google/gemini-cli`) |
+| ollama  | `config/ia/ollama`   | Servidor Ollama accesible (local o remoto) |
 
 ---
 
@@ -222,7 +232,7 @@ systemd --user
 | Herramienta   | Función                                      |
 |---------------|----------------------------------------------|
 | `handy`        | STT (Whisper local), graba y transcribe — [handy.computer](https://handy.computer) |
-| driver de IA   | ejecutable en `~/.talk2ai/ia/` — por defecto Gemini CLI |
+| driver de IA   | ejecutable en `~/.talk2ai/ia/` — Gemini CLI (por defecto) u Ollama |
 | `espeak-ng`    | TTS — síntesis de voz en español              |
 | `ydotool`      | Inyección de teclado vía uinput (Wayland)     |
 | `xdotool`      | Inyección de teclado fallback (X11)           |

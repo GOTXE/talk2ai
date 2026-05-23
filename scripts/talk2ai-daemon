@@ -16,6 +16,11 @@ LAST_ID=0
 LANGUAGE="es"
 AI_MODEL="gemini-2.5-flash-lite"
 
+declare -A DRIVER_MODELS=(
+    ["gemini"]="gemini-2.5-flash-lite"
+    ["ollama"]="qwen3.5:2b"
+)
+
 ERROR_MESSAGES=(
     "Vaya, algún bit se ha perdido y la respuesta no existe"
     "Ups, parece que los electrones se han ido de vacaciones"
@@ -90,10 +95,24 @@ _run_driver() {
     fi
 
     local context_file="$TALK2AI_DIR/context/$driver.md"
-    export TALK2AI_MODEL="$AI_MODEL"
+    local model_override_file="$TALK2AI_DIR/model-$driver"
+    local model
+    if [ -f "$model_override_file" ]; then
+        model=$(cat "$model_override_file")
+    else
+        model="${DRIVER_MODELS[$driver]:-$AI_MODEL}"
+    fi
+    echo "$model" > "$MODEL_FILE"
+    export TALK2AI_MODEL="$model"
     export TALK2AI_VOICE_PROMPT="$VOICE_PROMPT"
     export TALK2AI_CONTEXT_FILE=""
     [ -f "$context_file" ] && export TALK2AI_CONTEXT_FILE="$context_file"
+    local ollama_host_file="$TALK2AI_DIR/ollama-host"
+    if [ -f "$ollama_host_file" ]; then
+        export TALK2AI_OLLAMA_HOST=$(cat "$ollama_host_file")
+    else
+        export TALK2AI_OLLAMA_HOST="${TALK2AI_OLLAMA_HOST:-http://127.0.0.1:11434}"
+    fi
 
     "$driver_script" "$prompt" 2>"$_err_tmp"
 }
