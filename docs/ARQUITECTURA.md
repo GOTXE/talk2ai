@@ -157,8 +157,9 @@
   │                   escrito por: daemon (IA), handler (dictado)
   │                   leído por:   tray (ventana debug)
   │
-  ├── voice-prompt.md  ← instrucciones TTS para el modelo
-  ├── errors.log       ← respuestas vacías / errores del driver
+  ├── voice-prompt.md           ← prompt genérico (fallback para cualquier driver)
+  ├── voice-prompt-<driver>.md  ← prompt específico por driver (opcional, tiene prioridad)
+  ├── errors.log                ← respuestas vacías / errores del driver
   ├── tray.lock        ← flock instancia única del tray
   ├── ollama-host      ← URL del servidor Ollama (ej: http://20.0.0.110:11434)
   ├── model-<driver>   ← modelo persistente por driver (ej: model-ollama)
@@ -179,7 +180,7 @@ Entrada:   $1  →  texto del usuario
 
 Entorno:
   TALK2AI_MODEL          modelo a usar (definido por el daemon al arrancar)
-  TALK2AI_VOICE_PROMPT   ruta a instrucciones TTS
+  TALK2AI_VOICE_PROMPT   ruta al voice-prompt activo (específico del driver o genérico)
   TALK2AI_CONTEXT_FILE   ruta al contexto de personalidad (opcional)
   TALK2AI_OLLAMA_HOST    URL base del servidor Ollama (solo driver ollama)
 

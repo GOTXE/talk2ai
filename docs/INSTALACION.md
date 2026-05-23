@@ -60,6 +60,18 @@ El driver Ollama se instala automáticamente. Solo necesitas un servidor Ollama 
 
 El modelo por defecto es `qwen3.5:2b`. Puedes cambiarlo desde el tray → Ollama → *Seleccionar modelo…*
 
+### Personalizar el prompt de cada driver
+
+Cada driver puede tener su propio prompt de sistema en `~/.talk2ai/voice-prompt-<driver>.md`. Si no existe, se usa el genérico `~/.talk2ai/voice-prompt.md`.
+
+Puedes editar el prompt activo en cualquier momento desde el tray → *✏️ Editar prompt del driver…* (abre el fichero en tu editor de texto). El cambio se aplica en la siguiente consulta sin reiniciar nada.
+
+| Fichero | Propósito |
+|---|---|
+| `~/.talk2ai/voice-prompt.md` | Prompt genérico (fallback para cualquier driver) |
+| `~/.talk2ai/voice-prompt-ollama.md` | Prompt específico para Ollama (sin enlaces) |
+| `~/.talk2ai/voice-prompt-gemini.md` | Prompt específico para Gemini (si existe) |
+
 ### Otros drivers
 
 Cualquier script ejecutable en `~/.talk2ai/ia/<nombre>` que siga el contrato de driver es válido. Ver la sección **Drivers de IA** en el README.

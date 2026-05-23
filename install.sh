@@ -227,9 +227,16 @@ step "6/7  voice-prompt y contexto de personalidad"
 
 mkdir -p "$TALK2AI_DIR/context"
 
-# voice-prompt siempre se instala (no contiene datos personales)
+# voice-prompt genérico + específicos por driver
 cp "$REPO_DIR/config/voice-prompt.md" "$TALK2AI_DIR/voice-prompt.md"
 ok "voice-prompt.md → $TALK2AI_DIR/voice-prompt.md"
+for vp_src in "$REPO_DIR/config/voice-prompt-"*.md; do
+    [ -f "$vp_src" ] || continue
+    vp_name="$(basename "$vp_src")"
+    cp "$vp_src" "$TALK2AI_DIR/$vp_name"
+    ok "$vp_name → $TALK2AI_DIR/$vp_name"
+done
+info "Edita los prompts en $TALK2AI_DIR/voice-prompt*.md para personalizar cada driver"
 
 if [[ ! -f "$TALK2AI_DIR/context/gemini.md" ]]; then
     read -r -p "  ¿Instalar contexto de personalidad por defecto? [s/N] " resp
