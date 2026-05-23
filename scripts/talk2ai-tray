@@ -365,6 +365,10 @@ class StatusWorker(QObject):
         self.done.emit(check_status())
 
 
+class UpdateSignal(QObject):
+    result = pyqtSignal(str, str)
+
+
 
 class TalkTray:
     def __init__(self, app):
@@ -377,6 +381,8 @@ class TalkTray:
         self._beat_frame = 0
         self._debug_window = None
         self._ollama_models_cache = None
+        self._update_signal = UpdateSignal()
+        self._update_signal.result.connect(self._on_update_result)
         self._build_menu()
         self.tray.setIcon(make_icon(get_mode(), get_driver(), False))
         self.tray.setContextMenu(self.menu)
@@ -707,16 +713,19 @@ class TalkTray:
                     latest = json.loads(resp.read()).get("tag_name", "")
             except Exception:
                 latest = ""
-            QTimer.singleShot(0, lambda: self._on_update_result(local_tag, latest))
+            self._update_signal.result.emit(local_tag, latest)
         threading.Thread(target=_do, daemon=True).start()
 
     def _on_update_result(self, local_tag: str, latest: str):
         if not latest:
-            self.act_version.setText(f"  {local_tag}  —  sin conexión")
+            label = f"{local_tag}  —  sin conexión"
+            notif = (f"talk2ai {local_tag}", "Sin conexión — no se pudo comprobar", False)
         elif latest == local_tag:
-            self.act_version.setText(f"  {local_tag}  ✓  al día")
+            label = f"{local_tag}  ✓  al día"
+            notif = (f"talk2ai {local_tag}", "¡Estás al día!", False)
         else:
-            self.act_version.setText(f"  {local_tag}  →  {latest}  ↑  (clic para abrir)")
+            label = f"{local_tag}  →  {latest}  ↑  (clic para abrir)"
+            notif = (f"talk2ai — nueva versión {latest}", f"Instalada: {local_tag}", True)
             try:
                 self.act_version.triggered.disconnect()
             except Exception:
@@ -724,7 +733,23 @@ class TalkTray:
             self.act_version.triggered.connect(
                 lambda: subprocess.Popen(["xdg-open", GITHUB_RELEASES])
             )
+        self.act_version.setText(f"  {label}")
         self.act_version.setEnabled(True)
+
+        title, body, has_action = notif
+        cmd = ["notify-send", title, body, "--icon=dialog-information", "--urgency=normal", "-t", "8000"]
+        if has_action:
+            cmd += ["-A", "open=Ver releases"]
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            if has_action:
+                def _watch():
+                    out = proc.stdout.read().decode().strip()
+                    if out == "open":
+                        subprocess.Popen(["xdg-open", GITHUB_RELEASES])
+                threading.Thread(target=_watch, daemon=True).start()
+        except Exception:
+            pass
 
     def _on_status(self, status):
         self._checking = False
