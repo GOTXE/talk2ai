@@ -349,8 +349,8 @@ class TalkTray:
         self._processing = False
         self._beat_frame = 0
         self._debug_window = None
+        self._ollama_models_cache = None
         self._build_menu()
-        threading.Thread(target=self._fetch_ollama_models, daemon=True).start()
         self.tray.setIcon(make_icon(get_mode(), get_driver(), False))
         self.tray.setContextMenu(self.menu)
         self.tray.show()
@@ -410,8 +410,9 @@ class TalkTray:
         act_gemini.triggered.connect(lambda: self._set_driver("gemini"))
 
         self._ollama_menu = QMenu("🖥️  Ollama", self.menu)
-        self._loading_act = self._ollama_menu.addAction("  Cargando modelos…")
-        self._loading_act.setEnabled(False)
+        self._ollama_menu.aboutToShow.connect(self._on_ollama_menu_show)
+        placeholder = self._ollama_menu.addAction("  Abre para cargar modelos")
+        placeholder.setEnabled(False)
         self.menu.addMenu(self._ollama_menu)
 
         self.menu.addSeparator()
@@ -522,6 +523,15 @@ class TalkTray:
                 subprocess.run(["pkill", "-9", "-x", "handy"], capture_output=True)
         threading.Thread(target=_do, daemon=True).start()
 
+    def _on_ollama_menu_show(self):
+        if self._ollama_models_cache is not None:
+            self._populate_ollama_menu(self._ollama_models_cache)
+        else:
+            self._ollama_menu.clear()
+            loading = self._ollama_menu.addAction("  Cargando modelos…")
+            loading.setEnabled(False)
+            threading.Thread(target=self._fetch_ollama_models, daemon=True).start()
+
     def _fetch_ollama_models(self):
         import json
         import urllib.request
@@ -532,6 +542,7 @@ class TalkTray:
             models = [m['name'] for m in data.get('models', [])]
         except Exception:
             models = []
+        self._ollama_models_cache = models
         QTimer.singleShot(0, lambda: self._populate_ollama_menu(models))
 
     def _populate_ollama_menu(self, models):
@@ -564,7 +575,7 @@ class TalkTray:
         (TALK2AI_DIR / f"model-{driver}").write_text(model)
         if get_driver() == driver:
             MODEL_FILE.write_text(model)
-        threading.Thread(target=self._fetch_ollama_models, daemon=True).start()
+        self._ollama_models_cache = None
 
     def _set_mode(self, mode):
         MODE_FILE.write_text(mode)
