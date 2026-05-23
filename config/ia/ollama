@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+# Driver: Ollama (API REST streaming)
+# Contrato: recibe argv[1]=prompt, lee TALK2AI_MODEL / TALK2AI_VOICE_PROMPT / TALK2AI_CONTEXT_FILE / TALK2AI_OLLAMA_HOST
+import sys
+import json
+import os
+import urllib.request
+
+host  = os.environ.get('TALK2AI_OLLAMA_HOST', 'http://20.0.0.110:11434')
+model = os.environ.get('TALK2AI_MODEL', 'qwen3.5:2b')
+prompt = sys.argv[1] if len(sys.argv) > 1 else ''
+
+system_parts = []
+vp = os.environ.get('TALK2AI_VOICE_PROMPT', '')
+cf = os.environ.get('TALK2AI_CONTEXT_FILE', '')
+if vp and os.path.isfile(vp):
+    with open(vp) as f:
+        system_parts.append(f.read().strip())
+if cf and os.path.isfile(cf):
+    with open(cf) as f:
+        system_parts.append(f.read().strip())
+system = '\n\n'.join(system_parts)
+
+data = json.dumps({
+    'model':  model,
+    'prompt': prompt,
+    'system': system,
+    'stream': True,
+}).encode()
+
+req = urllib.request.Request(
+    f'{host}/api/generate',
+    data=data,
+    headers={'Content-Type': 'application/json'},
+)
+
+try:
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        for line in resp:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            token = obj.get('response', '')
+            if token:
+                print(token, end='', flush=True)
+    print()
+except urllib.error.URLError as e:
+    print(f'Error conectando con Ollama en {host}: {e}', file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f'Error: {e}', file=sys.stderr)
+    sys.exit(1)
