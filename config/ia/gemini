@@ -68,47 +68,31 @@ def _build_system_prompt():
     return "\n\n".join(parts) if parts else None
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Uso: gemini <prompt>", file=sys.stderr)
-        sys.exit(1)
+def _parse_reset_seconds(resp_json):
+    """Extrae los segundos de espera del mensaje de rate limit, o None."""
+    import re
+    msg = resp_json.get("error", {}).get("message", "")
+    m = re.search(r"reset after (\d+)s", msg)
+    return int(m.group(1)) if m else None
 
-    prompt = sys.argv[1]
-    model  = os.environ.get("TALK2AI_MODEL", "gemini-2.5-flash-lite")
-    system = _build_system_prompt()
 
-    token   = _get_token()
-    project = _get_project(token)
-
-    body = {
-        "model":   model,
-        "project": project,
-        "request": {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "tools": [{"googleSearch": {}}],
-            "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}},
-        },
-    }
-    if system:
-        body["request"]["systemInstruction"] = {"parts": [{"text": system}]}
-
+def _stream(token, body):
+    """Llama al endpoint de streaming y vuelca el texto a stdout.
+    Devuelve (True, None) si ok, (False, reset_seconds) si 429."""
     resp = requests.post(
         f"{CODE_ASSIST}/v1internal:streamGenerateContent?alt=sse",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         json=body,
         stream=True,
     )
-
     if resp.status_code == 429:
-        print(f"[talk2ai] Rate limit: {resp.json().get('error',{}).get('message','')}", file=sys.stderr)
-        sys.exit(1)
-
+        wait = _parse_reset_seconds(resp.json())
+        return False, wait
     resp.raise_for_status()
 
     buf = []
     for raw in resp.iter_lines():
         if not raw:
-            # línea vacía = fin del evento SSE
             if buf:
                 payload = "\n".join(buf)
                 buf = []
@@ -127,6 +111,55 @@ def main():
             buf.append(line[6:].strip())
 
     print()
+    return True, None
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Uso: gemini <prompt>", file=sys.stderr)
+        sys.exit(1)
+
+    prompt = sys.argv[1]
+    model  = os.environ.get("TALK2AI_MODEL", "gemini-2.5-flash-lite")
+    system = _build_system_prompt()
+
+    token   = _get_token()
+    project = _get_project(token)
+
+    def _body(with_search):
+        b = {
+            "model":   model,
+            "project": project,
+            "request": {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}},
+            },
+        }
+        if with_search:
+            b["request"]["tools"] = [{"googleSearch": {}}]
+        if system:
+            b["request"]["systemInstruction"] = {"parts": [{"text": system}]}
+        return b
+
+    # Intento 1: con Google Search
+    ok, wait = _stream(token, _body(with_search=True))
+    if ok:
+        return
+
+    # 429 con search → esperar si el reset es corto (<= 60s) y reintentar con search
+    if wait and wait <= 60:
+        print(f"[talk2ai] Rate limit, esperando {wait}s...", file=sys.stderr)
+        time.sleep(wait + 1)
+        ok, wait = _stream(token, _body(with_search=True))
+        if ok:
+            return
+
+    # Último intento: sin search (no consume cuota de grounding)
+    print("[talk2ai] Search no disponible, respondiendo sin búsqueda web", file=sys.stderr)
+    ok, _ = _stream(token, _body(with_search=False))
+    if not ok:
+        print("[talk2ai] Rate limit total, sin respuesta", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
