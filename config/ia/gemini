@@ -1,14 +1,132 @@
-#!/bin/bash
-# Driver: Gemini CLI
+#!/usr/bin/env python3
+# Driver: Gemini — streaming OAuth directo (misma auth que el gemini CLI)
 # Contrato: recibe $1=prompt, lee TALK2AI_MODEL / TALK2AI_VOICE_PROMPT / TALK2AI_CONTEXT_FILE
-PROMPT="$1"
-RUNTIME_DIR=$(mktemp -d)
-trap "rm -rf $RUNTIME_DIR" EXIT
+import sys
+import os
+import json
+import time
+import requests
 
-{
-    cat "$TALK2AI_VOICE_PROMPT"
-    echo ""
-    [ -n "$TALK2AI_CONTEXT_FILE" ] && [ -f "$TALK2AI_CONTEXT_FILE" ] && cat "$TALK2AI_CONTEXT_FILE"
-} > "$RUNTIME_DIR/GEMINI.md"
+TALK2AI_DIR   = os.path.expanduser("~/.talk2ai")
+CREDS_PATH    = os.path.expanduser("~/.gemini/oauth_creds.json")
+PROJECT_CACHE = os.path.join(TALK2AI_DIR, "gemini-project")
 
-(cd "$RUNTIME_DIR" && gemini --model "$TALK2AI_MODEL" --skip-trust -p "$PROMPT")
+CODE_ASSIST   = "https://cloudcode-pa.googleapis.com"
+TOKEN_URI     = "https://oauth2.googleapis.com/token"
+CLIENT_ID     = "_EXTRACTED_FROM_CLI_BUNDLE_"
+CLIENT_SECRET = "_EXTRACTED_FROM_CLI_BUNDLE_"
+
+
+def _get_token():
+    with open(CREDS_PATH) as f:
+        data = json.load(f)
+    if time.time() < data.get("expiry_date", 0) / 1000 - 60:
+        return data["access_token"]
+    resp = requests.post(TOKEN_URI, data={
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "refresh_token": data["refresh_token"],
+        "grant_type": "refresh_token",
+    })
+    resp.raise_for_status()
+    new = resp.json()
+    data["access_token"] = new["access_token"]
+    data["expiry_date"]  = int(time.time() * 1000) + new.get("expires_in", 3600) * 1000
+    with open(CREDS_PATH, "w") as f:
+        json.dump(data, f)
+    return data["access_token"]
+
+
+def _get_project(token):
+    if os.path.isfile(PROJECT_CACHE):
+        proj = open(PROJECT_CACHE).read().strip()
+        if proj:
+            return proj
+    resp = requests.post(
+        f"{CODE_ASSIST}/v1internal:loadCodeAssist",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={},
+    )
+    resp.raise_for_status()
+    proj = resp.json().get("cloudaicompanionProject", "")
+    if proj:
+        with open(PROJECT_CACHE, "w") as f:
+            f.write(proj)
+    return proj
+
+
+def _build_system_prompt():
+    parts = []
+    vp = os.environ.get("TALK2AI_VOICE_PROMPT", "")
+    if vp and os.path.isfile(vp):
+        with open(vp) as f:
+            parts.append(f.read().strip())
+    ctx = os.environ.get("TALK2AI_CONTEXT_FILE", "")
+    if ctx and os.path.isfile(ctx):
+        with open(ctx) as f:
+            parts.append(f.read().strip())
+    return "\n\n".join(parts) if parts else None
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Uso: gemini <prompt>", file=sys.stderr)
+        sys.exit(1)
+
+    prompt = sys.argv[1]
+    model  = os.environ.get("TALK2AI_MODEL", "gemini-2.5-flash-lite")
+    system = _build_system_prompt()
+
+    token   = _get_token()
+    project = _get_project(token)
+
+    body = {
+        "model":   model,
+        "project": project,
+        "request": {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}},
+        },
+    }
+    if system:
+        body["request"]["systemInstruction"] = {"parts": [{"text": system}]}
+
+    resp = requests.post(
+        f"{CODE_ASSIST}/v1internal:streamGenerateContent?alt=sse",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=body,
+        stream=True,
+    )
+
+    if resp.status_code == 429:
+        print(f"[talk2ai] Rate limit: {resp.json().get('error',{}).get('message','')}", file=sys.stderr)
+        sys.exit(1)
+
+    resp.raise_for_status()
+
+    buf = []
+    for raw in resp.iter_lines():
+        if not raw:
+            # línea vacía = fin del evento SSE
+            if buf:
+                payload = "\n".join(buf)
+                buf = []
+                try:
+                    chunk = json.loads(payload)
+                    for cand in chunk.get("response", {}).get("candidates", []):
+                        for part in cand.get("content", {}).get("parts", []):
+                            text = part.get("text", "")
+                            if text:
+                                print(text, end="", flush=True)
+                except json.JSONDecodeError:
+                    pass
+            continue
+        line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        if line.startswith("data: "):
+            buf.append(line[6:].strip())
+
+    print()
+
+
+if __name__ == "__main__":
+    main()
