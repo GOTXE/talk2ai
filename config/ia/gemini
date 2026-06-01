@@ -13,8 +13,51 @@ PROJECT_CACHE = os.path.join(TALK2AI_DIR, "gemini-project")
 
 CODE_ASSIST   = "https://cloudcode-pa.googleapis.com"
 TOKEN_URI     = "https://oauth2.googleapis.com/token"
-CLIENT_ID     = "_EXTRACTED_FROM_CLI_BUNDLE_"
-CLIENT_SECRET = "_EXTRACTED_FROM_CLI_BUNDLE_"
+
+
+def _get_oauth_client():
+    """Extrae client_id y client_secret del bundle del Gemini CLI instalado.
+    No se almacenan en el repo — se leen del mismo paquete npm que los usa."""
+    import glob, re, base64
+
+    # client_id: campo 'azp' del id_token en oauth_creds.json
+    with open(CREDS_PATH) as f:
+        creds_data = json.load(f)
+    client_id = ""
+    id_token = creds_data.get("id_token", "")
+    if id_token:
+        try:
+            payload = id_token.split(".")[1]
+            payload += "=" * (4 - len(payload) % 4)
+            client_id = json.loads(base64.b64decode(payload)).get("azp", "")
+        except Exception:
+            pass
+
+    # client_secret: patrón GOCSPX- en el bundle del CLI
+    bundle_patterns = [
+        os.path.expanduser(
+            "~/.nvm/versions/node/*/lib/node_modules"
+            "/@google/gemini-cli/bundle/chunk-DN4XSYRG.js"
+        ),
+        "/usr/lib/node_modules/@google/gemini-cli/bundle/chunk-DN4XSYRG.js",
+        "/usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-DN4XSYRG.js",
+    ]
+    client_secret = ""
+    for pattern in bundle_patterns:
+        for fpath in glob.glob(pattern):
+            m = re.search(r"(GOCSPX-[A-Za-z0-9_\-]{20,})", open(fpath).read())
+            if m:
+                client_secret = m.group(1)
+                break
+        if client_secret:
+            break
+
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "No se encontraron credenciales OAuth del Gemini CLI. "
+            "Asegúrate de que @google/gemini-cli está instalado y has hecho 'gemini auth login'."
+        )
+    return client_id, client_secret
 
 
 def _get_token():
@@ -22,9 +65,10 @@ def _get_token():
         data = json.load(f)
     if time.time() < data.get("expiry_date", 0) / 1000 - 60:
         return data["access_token"]
+    client_id, client_secret = _get_oauth_client()
     resp = requests.post(TOKEN_URI, data={
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
+        "client_id": client_id,
+        "client_secret": client_secret,
         "refresh_token": data["refresh_token"],
         "grant_type": "refresh_token",
     })
