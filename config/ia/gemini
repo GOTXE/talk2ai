@@ -1,14 +1,270 @@
-#!/bin/bash
-# Driver: Gemini CLI
+#!/usr/bin/env python3
+# Driver: Gemini — streaming OAuth directo (misma auth que el gemini CLI)
 # Contrato: recibe $1=prompt, lee TALK2AI_MODEL / TALK2AI_VOICE_PROMPT / TALK2AI_CONTEXT_FILE
-PROMPT="$1"
-RUNTIME_DIR=$(mktemp -d)
-trap "rm -rf $RUNTIME_DIR" EXIT
+import sys
+import os
+import json
+import time
+import requests
 
-{
-    cat "$TALK2AI_VOICE_PROMPT"
-    echo ""
-    [ -n "$TALK2AI_CONTEXT_FILE" ] && [ -f "$TALK2AI_CONTEXT_FILE" ] && cat "$TALK2AI_CONTEXT_FILE"
-} > "$RUNTIME_DIR/GEMINI.md"
+TALK2AI_DIR   = os.path.expanduser("~/.talk2ai")
+CREDS_PATH    = os.path.expanduser("~/.gemini/oauth_creds.json")
+PROJECT_CACHE = os.path.join(TALK2AI_DIR, "gemini-project")
 
-(cd "$RUNTIME_DIR" && gemini --model "$TALK2AI_MODEL" --skip-trust -p "$PROMPT")
+CODE_ASSIST   = "https://cloudcode-pa.googleapis.com"
+TOKEN_URI     = "https://oauth2.googleapis.com/token"
+
+
+def _get_oauth_client():
+    """Extrae client_id y client_secret del bundle del Gemini CLI instalado.
+    No se almacenan en el repo — se leen del mismo paquete npm que los usa."""
+    import glob, re, base64
+
+    # client_id: campo 'azp' del id_token en oauth_creds.json
+    with open(CREDS_PATH) as f:
+        creds_data = json.load(f)
+    client_id = ""
+    id_token = creds_data.get("id_token", "")
+    if id_token:
+        try:
+            payload = id_token.split(".")[1]
+            payload += "=" * (4 - len(payload) % 4)
+            client_id = json.loads(base64.b64decode(payload)).get("azp", "")
+        except Exception:
+            pass
+
+    # client_secret: patrón GOCSPX- en el bundle del CLI
+    bundle_patterns = [
+        os.path.expanduser(
+            "~/.nvm/versions/node/*/lib/node_modules"
+            "/@google/gemini-cli/bundle/chunk-DN4XSYRG.js"
+        ),
+        "/usr/lib/node_modules/@google/gemini-cli/bundle/chunk-DN4XSYRG.js",
+        "/usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-DN4XSYRG.js",
+    ]
+    client_secret = ""
+    for pattern in bundle_patterns:
+        for fpath in glob.glob(pattern):
+            m = re.search(r"(GOCSPX-[A-Za-z0-9_\-]{20,})", open(fpath).read())
+            if m:
+                client_secret = m.group(1)
+                break
+        if client_secret:
+            break
+
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "No se encontraron credenciales OAuth del Gemini CLI. "
+            "Asegúrate de que @google/gemini-cli está instalado y has hecho 'gemini auth login'."
+        )
+    return client_id, client_secret
+
+
+def _get_token():
+    with open(CREDS_PATH) as f:
+        data = json.load(f)
+    if time.time() < data.get("expiry_date", 0) / 1000 - 60:
+        return data["access_token"]
+    client_id, client_secret = _get_oauth_client()
+    resp = requests.post(TOKEN_URI, data={
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": data["refresh_token"],
+        "grant_type": "refresh_token",
+    })
+    resp.raise_for_status()
+    new = resp.json()
+    data["access_token"] = new["access_token"]
+    data["expiry_date"]  = int(time.time() * 1000) + new.get("expires_in", 3600) * 1000
+    with open(CREDS_PATH, "w") as f:
+        json.dump(data, f)
+    return data["access_token"]
+
+
+def _get_project(token):
+    if os.path.isfile(PROJECT_CACHE):
+        proj = open(PROJECT_CACHE).read().strip()
+        if proj:
+            return proj
+    resp = requests.post(
+        f"{CODE_ASSIST}/v1internal:loadCodeAssist",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={},
+    )
+    resp.raise_for_status()
+    proj = resp.json().get("cloudaicompanionProject", "")
+    if proj:
+        with open(PROJECT_CACHE, "w") as f:
+            f.write(proj)
+    return proj
+
+
+def _build_system_prompt():
+    parts = []
+    vp = os.environ.get("TALK2AI_VOICE_PROMPT", "")
+    if vp and os.path.isfile(vp):
+        with open(vp) as f:
+            parts.append(f.read().strip())
+    ctx = os.environ.get("TALK2AI_CONTEXT_FILE", "")
+    if ctx and os.path.isfile(ctx):
+        with open(ctx) as f:
+            parts.append(f.read().strip())
+    return "\n\n".join(parts) if parts else None
+
+
+def _parse_reset_seconds(resp_json):
+    """Extrae los segundos de espera del mensaje de rate limit, o None."""
+    import re
+    msg = resp_json.get("error", {}).get("message", "")
+    m = re.search(r"reset after (\d+)s", msg)
+    return int(m.group(1)) if m else None
+
+
+def _google_search_url(prompt):
+    from urllib.parse import quote_plus
+    import re
+    # Extraer desde la primera palabra interrogativa o sustantivo relevante,
+    # eliminando preámbulos del tipo "busca en internet...", "quiero que busques..."
+    # Las palabras interrogativas en español llevan tilde (qué, quién, cuál…)
+    # "que" sin tilde es conjunción, no cuenta como inicio de pregunta real
+    m = re.search(r'\b(qué|quién|cuál|cuándo|cómo|dónde|por qué)\b', prompt, re.IGNORECASE)
+    q = prompt[m.start():].strip() if m else re.sub(
+        r'(?i)^(quiero que busques?|busca(?:\s+en\s+(?:internet|la web))?|buscar|search)[,\s]+',
+        '', prompt
+    ).strip()
+    return f"https://www.google.com/search?q={quote_plus(q or prompt)}"
+
+
+def _stream(token, body, prompt):
+    """Llama al endpoint de streaming y vuelca el texto a stdout.
+    Devuelve (True, None) si ok, (False, reset_seconds) si 429."""
+    import re
+    _link_re = re.compile(r'\[ENLACE:[^\]]*\]')
+
+    resp = requests.post(
+        f"{CODE_ASSIST}/v1internal:streamGenerateContent?alt=sse",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=body,
+        stream=True,
+    )
+    if resp.status_code == 429:
+        wait = _parse_reset_seconds(resp.json())
+        return False, wait
+    resp.raise_for_status()
+
+    buf = []
+    grounding_uri = None   # primer URL real de grounding
+    model_linked  = False  # el modelo incluyó [ENLACE:...]
+
+    for raw in resp.iter_lines():
+        if not raw:
+            if buf:
+                payload = "\n".join(buf)
+                buf = []
+                try:
+                    chunk = json.loads(payload)
+                    for cand in chunk.get("response", {}).get("candidates", []):
+                        # Capturar URL real del primer groundingChunk
+                        gchunks = cand.get("groundingMetadata", {}).get("groundingChunks", [])
+                        if gchunks and not grounding_uri:
+                            grounding_uri = gchunks[0].get("web", {}).get("uri", "")
+
+                        for part in cand.get("content", {}).get("parts", []):
+                            text = part.get("text", "")
+                            if not text:
+                                continue
+                            if _link_re.search(text):
+                                model_linked = True
+                            # Imprimir texto sin el [ENLACE:] inventado por el modelo
+                            clean = _link_re.sub("", text)
+                            if clean:
+                                print(clean, end="", flush=True)
+                except json.JSONDecodeError:
+                    pass
+            continue
+        line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        if line.startswith("data: "):
+            buf.append(line[6:].strip())
+
+    # Procesar el último chunk si el stream cerró sin línea vacía final
+    if buf:
+        try:
+            chunk = json.loads("\n".join(buf))
+            for cand in chunk.get("response", {}).get("candidates", []):
+                gchunks = cand.get("groundingMetadata", {}).get("groundingChunks", [])
+                if gchunks and not grounding_uri:
+                    grounding_uri = gchunks[0].get("web", {}).get("uri", "")
+                for part in cand.get("content", {}).get("parts", []):
+                    text = part.get("text", "")
+                    if not text:
+                        continue
+                    if _link_re.search(text):
+                        model_linked = True
+                    clean = _link_re.sub("", text)
+                    if clean:
+                        print(clean, end="", flush=True)
+        except json.JSONDecodeError:
+            pass
+
+    # Enlace de salida:
+    # 1) URL real de grounding (search corrió y devolvió fuentes)
+    # 2) Búsqueda Google como fallback (el modelo quería enlace pero no hay grounding)
+    if grounding_uri:
+        print(f"\n[ENLACE: {grounding_uri}]", flush=True)
+    elif model_linked:
+        print(f"\n[ENLACE: {_google_search_url(prompt)}]", flush=True)
+
+    print()
+    return True, None
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Uso: gemini <prompt>", file=sys.stderr)
+        sys.exit(1)
+
+    prompt = sys.argv[1]
+    model  = os.environ.get("TALK2AI_MODEL", "gemini-2.5-flash-lite")
+    system = _build_system_prompt()
+
+    token   = _get_token()
+    project = _get_project(token)
+
+    def _body(with_search):
+        b = {
+            "model":   model,
+            "project": project,
+            "request": {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}},
+            },
+        }
+        if with_search:
+            b["request"]["tools"] = [{"googleSearch": {}}]
+        if system:
+            b["request"]["systemInstruction"] = {"parts": [{"text": system}]}
+        return b
+
+    # Intento 1: con Google Search
+    ok, wait = _stream(token, _body(with_search=True), prompt)
+    if ok:
+        return
+
+    # 429 con search → esperar si el reset es corto (<= 60s) y reintentar con search
+    if wait and wait <= 60:
+        print(f"[talk2ai] Rate limit, esperando {wait}s...", file=sys.stderr)
+        time.sleep(wait + 1)
+        ok, wait = _stream(token, _body(with_search=True), prompt)
+        if ok:
+            return
+
+    # Último intento: sin search (no consume cuota de grounding)
+    print("[talk2ai] Search no disponible, respondiendo sin búsqueda web", file=sys.stderr)
+    ok, _ = _stream(token, _body(with_search=False), prompt)
+    if not ok:
+        print("[talk2ai] Rate limit total, sin respuesta", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
