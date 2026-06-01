@@ -76,7 +76,15 @@ def _parse_reset_seconds(resp_json):
     return int(m.group(1)) if m else None
 
 
-def _stream(token, body):
+def _google_search_url(prompt):
+    from urllib.parse import quote_plus
+    import re
+    # Quitar frases de petición para limpiar la query de búsqueda
+    q = re.sub(r'(?i)^(busca en internet|busca en la web|buscar|busca|search)[,\s]+', '', prompt).strip()
+    return f"https://www.google.com/search?q={quote_plus(q or prompt)}"
+
+
+def _stream(token, body, prompt):
     """Llama al endpoint de streaming y vuelca el texto a stdout.
     Devuelve (True, None) si ok, (False, reset_seconds) si 429."""
     import re
@@ -147,10 +155,13 @@ def _stream(token, body):
         except json.JSONDecodeError:
             pass
 
-    # Si search encontró fuentes, añadir la URL real de grounding.
-    # Ignoramos la URL que el modelo haya inventado.
+    # Enlace de salida:
+    # 1) URL real de grounding (search corrió y devolvió fuentes)
+    # 2) Búsqueda Google como fallback (el modelo quería enlace pero no hay grounding)
     if grounding_uri:
         print(f"\n[ENLACE: {grounding_uri}]", flush=True)
+    elif model_linked:
+        print(f"\n[ENLACE: {_google_search_url(prompt)}]", flush=True)
 
     print()
     return True, None
@@ -184,7 +195,7 @@ def main():
         return b
 
     # Intento 1: con Google Search
-    ok, wait = _stream(token, _body(with_search=True))
+    ok, wait = _stream(token, _body(with_search=True), prompt)
     if ok:
         return
 
@@ -192,13 +203,13 @@ def main():
     if wait and wait <= 60:
         print(f"[talk2ai] Rate limit, esperando {wait}s...", file=sys.stderr)
         time.sleep(wait + 1)
-        ok, wait = _stream(token, _body(with_search=True))
+        ok, wait = _stream(token, _body(with_search=True), prompt)
         if ok:
             return
 
     # Último intento: sin search (no consume cuota de grounding)
     print("[talk2ai] Search no disponible, respondiendo sin búsqueda web", file=sys.stderr)
-    ok, _ = _stream(token, _body(with_search=False))
+    ok, _ = _stream(token, _body(with_search=False), prompt)
     if not ok:
         print("[talk2ai] Rate limit total, sin respuesta", file=sys.stderr)
         sys.exit(1)
