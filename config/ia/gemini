@@ -79,8 +79,15 @@ def _parse_reset_seconds(resp_json):
 def _google_search_url(prompt):
     from urllib.parse import quote_plus
     import re
-    # Quitar frases de petición para limpiar la query de búsqueda
-    q = re.sub(r'(?i)^(busca en internet|busca en la web|buscar|busca|search)[,\s]+', '', prompt).strip()
+    # Extraer desde la primera palabra interrogativa o sustantivo relevante,
+    # eliminando preámbulos del tipo "busca en internet...", "quiero que busques..."
+    # Las palabras interrogativas en español llevan tilde (qué, quién, cuál…)
+    # "que" sin tilde es conjunción, no cuenta como inicio de pregunta real
+    m = re.search(r'\b(qué|quién|cuál|cuándo|cómo|dónde|por qué)\b', prompt, re.IGNORECASE)
+    q = prompt[m.start():].strip() if m else re.sub(
+        r'(?i)^(quiero que busques?|busca(?:\s+en\s+(?:internet|la web))?|buscar|search)[,\s]+',
+        '', prompt
+    ).strip()
     return f"https://www.google.com/search?q={quote_plus(q or prompt)}"
 
 
