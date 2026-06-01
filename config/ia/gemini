@@ -79,6 +79,9 @@ def _parse_reset_seconds(resp_json):
 def _stream(token, body):
     """Llama al endpoint de streaming y vuelca el texto a stdout.
     Devuelve (True, None) si ok, (False, reset_seconds) si 429."""
+    import re
+    _link_re = re.compile(r'\[ENLACE:[^\]]*\]')
+
     resp = requests.post(
         f"{CODE_ASSIST}/v1internal:streamGenerateContent?alt=sse",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
@@ -91,6 +94,9 @@ def _stream(token, body):
     resp.raise_for_status()
 
     buf = []
+    grounding_uri = None   # primer URL real de grounding
+    model_linked  = False  # el modelo incluyó [ENLACE:...]
+
     for raw in resp.iter_lines():
         if not raw:
             if buf:
@@ -99,16 +105,52 @@ def _stream(token, body):
                 try:
                     chunk = json.loads(payload)
                     for cand in chunk.get("response", {}).get("candidates", []):
+                        # Capturar URL real del primer groundingChunk
+                        gchunks = cand.get("groundingMetadata", {}).get("groundingChunks", [])
+                        if gchunks and not grounding_uri:
+                            grounding_uri = gchunks[0].get("web", {}).get("uri", "")
+
                         for part in cand.get("content", {}).get("parts", []):
                             text = part.get("text", "")
-                            if text:
-                                print(text, end="", flush=True)
+                            if not text:
+                                continue
+                            if _link_re.search(text):
+                                model_linked = True
+                            # Imprimir texto sin el [ENLACE:] inventado por el modelo
+                            clean = _link_re.sub("", text)
+                            if clean:
+                                print(clean, end="", flush=True)
                 except json.JSONDecodeError:
                     pass
             continue
         line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
         if line.startswith("data: "):
             buf.append(line[6:].strip())
+
+    # Procesar el último chunk si el stream cerró sin línea vacía final
+    if buf:
+        try:
+            chunk = json.loads("\n".join(buf))
+            for cand in chunk.get("response", {}).get("candidates", []):
+                gchunks = cand.get("groundingMetadata", {}).get("groundingChunks", [])
+                if gchunks and not grounding_uri:
+                    grounding_uri = gchunks[0].get("web", {}).get("uri", "")
+                for part in cand.get("content", {}).get("parts", []):
+                    text = part.get("text", "")
+                    if not text:
+                        continue
+                    if _link_re.search(text):
+                        model_linked = True
+                    clean = _link_re.sub("", text)
+                    if clean:
+                        print(clean, end="", flush=True)
+        except json.JSONDecodeError:
+            pass
+
+    # Si search encontró fuentes, añadir la URL real de grounding.
+    # Ignoramos la URL que el modelo haya inventado.
+    if grounding_uri:
+        print(f"\n[ENLACE: {grounding_uri}]", flush=True)
 
     print()
     return True, None
