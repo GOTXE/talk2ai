@@ -85,6 +85,7 @@ def main():
         "project": project,
         "request": {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "tools": [{"googleSearch": {}}],
             "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}},
         },
     }
