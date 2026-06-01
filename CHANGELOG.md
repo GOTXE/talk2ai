@@ -6,6 +6,21 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [1.4.0] — 2026-06-01
+
+### Añadido
+- **Streaming OAuth nativo en el driver Gemini**: reemplaza la llamada al CLI de Node.js (`gemini -p`) por HTTP directo al endpoint interno `cloudcode-pa.googleapis.com`, reutilizando las credenciales OAuth del CLI. Primer token en ~2s frente a ~10s anteriores; el audio empieza en cuanto llega la primera frase
+- **Google Search grounding**: activa `googleSearch` como tool en cada petición; el modelo busca en la web antes de responder, eliminando respuestas obsoletas del corte de entrenamiento (ej. versión de Arch Linux, ganador del Giro)
+- **URL real de fuente**: extrae `groundingChunks[0].web.uri` (redirect de Vertex AI al artículo específico) en lugar de la URL inventada por el modelo
+
+### Corregido
+- **Rate limit silencioso**: cuando el endpoint devuelve 429, el driver espera el tiempo exacto indicado por la API y reintenta con search; si sigue bloqueado, reintenta sin search; solo falla si ambos intentos son imposibles
+- **Último chunk SSE sin línea vacía**: el stream SSE cierra sin blank line final; el driver ahora procesa ese chunk pendiente para capturar los `groundingChunks`
+- **Aviso de enlace sin URL**: cuando el modelo anuncia "te dejo el enlace en avisos" pero no hay grounding disponible, genera automáticamente un enlace de búsqueda de Google con la pregunta limpia (extrae desde la palabra interrogativa acentuada: "Quiero que busques quién…" → "quién…")
+- **Voice-prompt**: instrucción explícita para que el modelo use siempre la herramienta de búsqueda cuando el usuario pida buscar en internet o pregunte por eventos recientes
+
+---
+
 ## [1.3.1] — 2026-05-23
 
 ### Corregido
