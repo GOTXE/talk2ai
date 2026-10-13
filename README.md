@@ -6,7 +6,7 @@
 ![Wayland](https://img.shields.io/badge/Wayland-compatible-00ADEF?logo=wayland&logoColor=white)
 ![X11](https://img.shields.io/badge/X11-compatible-F05032?logo=x.org&logoColor=white)
 [![Handy](https://img.shields.io/badge/Handy-STT_local-FF6B6B?logo=microphone&logoColor=white)](https://handy.computer)
-[![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-driver_por_defecto-4285F4?logo=google&logoColor=white)](https://github.com/google-gemini/gemini-cli)
+[![Gemini / AGY](https://img.shields.io/badge/Gemini_AGY-driver_por_defecto-4285F4?logo=google&logoColor=white)](https://antigravity.google)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue?logo=gnu&logoColor=white)
 
 Asistente de voz para Linux con dos modos de uso: **dictado** (tu voz → texto en la ventana activa) e **IA** (tu voz → respuesta de la IA → audio). Usa [Handy](https://handy.computer) para la transcripción local voz→texto.
@@ -61,11 +61,11 @@ El modo persiste hasta que lo cambias. Puedes alternar entre ambos en cualquier 
 - **SO:** Linux x86_64 (KDE Plasma recomendado; otros escritorios soportados)
 - **Python:** 3.10+
 - [**Handy**](https://handy.computer) AppImage en PATH como `handy`
-- [**Gemini CLI**](https://github.com/google-gemini/gemini-cli) en PATH y autenticado (driver por defecto)
+- [**Antigravity AGY / Gemini CLI**](https://antigravity.google) en PATH y autenticado (`agy` o `gemini`) (driver por defecto, modelo `gemini-3.8-flash-low`)
 
 ## Instalación
 
-### Paso previo: instalar Handy y Gemini CLI
+### Paso previo: instalar Handy y Gemini / AGY CLI
 
 **1. Handy** — descarga la última versión desde [github.com/cjpais/Handy/releases](https://github.com/cjpais/Handy/releases) y colócalo en PATH:
 
@@ -74,9 +74,13 @@ chmod +x Handy_*.AppImage
 mv Handy_*.AppImage ~/.local/bin/handy
 ```
 
-**2. Gemini CLI** — driver de IA por defecto. Requiere Node.js 18+:
+**2. Antigravity AGY / Gemini CLI** — driver de IA por defecto con `gemini-3.8-flash-low`. Requiere tener `agy` (Antigravity CLI) o `gemini` en PATH y autenticado:
 
 ```bash
+# Antigravity AGY CLI (recomendado):
+agy -p "hola" --model gemini-3.8-flash-low
+
+# O Gemini CLI (fallback):
 npm install -g @google/gemini-cli
 gemini auth login
 ```
@@ -150,7 +154,7 @@ talk2ai/
 │   ├── voice-prompt.md      ← instrucciones TTS para el driver
 │   ├── gemini-context.md    ← personalidad/contexto de Gemini
 │   └── ia/
-│       └── gemini           ← driver Gemini CLI
+│       └── gemini           ← driver Gemini / AGY CLI
 └── docs/
     └── ARQUITECTURA.md
 ```

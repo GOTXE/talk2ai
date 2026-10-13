@@ -121,6 +121,9 @@ def get_driver() -> str:
 def _check_driver_ok(driver: str) -> tuple[str, bool]:
     if driver == "ollama":
         return "Ollama driver", (TALK2AI_DIR / "ia" / "ollama").exists()
+    if driver == "gemini":
+        has_cli = run(["which", "agy"]).returncode == 0 or run(["which", "gemini"]).returncode == 0
+        return "Gemini (AGY)", has_cli and (TALK2AI_DIR / "ia" / "gemini").exists()
     return f"{driver} CLI", run(["which", driver]).returncode == 0
 
 
@@ -340,11 +343,6 @@ class DebugWindow(QWidget):
                     f'<span style="color:#616161">[{dt}]</span>&nbsp;'
                     f'<span style="color:#A5D6A7"><b>[IA]</b></span>&nbsp;'
                     f'<span style="color:#E0E0E0">{_html.escape(text)}</span>'
-                )
-            elif kind == "STAT":
-                frag = (
-                    f'<span style="color:#616161">[{dt}]</span>&nbsp;'
-                    f'<span style="color:#FFD54F">{_html.escape(text)}</span>'
                 )
             else:
                 continue
@@ -671,7 +669,7 @@ class TalkTray:
         try:
             return f.read_text().strip()
         except Exception:
-            defaults = {"gemini": "gemini-2.5-flash-lite", "ollama": "qwen3.5:2b"}
+            defaults = {"gemini": "gemini-3.8-flash-low", "ollama": "qwen3.5:2b"}
             return defaults.get(driver, "")
 
     def _set_driver_model(self, driver, model):

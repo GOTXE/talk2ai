@@ -41,14 +41,17 @@ mv Handy_*.AppImage ~/.local/bin/handy
 
 talk2ai usa un sistema de drivers intercambiables. El instalador despliega automáticamente todos los drivers incluidos en el repo (`gemini` y `ollama`).
 
-### Gemini CLI (por defecto)
+### Gemini / Antigravity AGY CLI (por defecto)
 
-Requiere Node.js 18+:
+El driver utiliza Antigravity AGY CLI (`agy`) o Gemini CLI (`gemini`) con el modelo `gemini-3.8-flash-low`:
 
 ```bash
+# Antigravity AGY CLI (recomendado):
+agy -p "hola" --model gemini-3.8-flash-low
+
+# O Gemini CLI (fallback):
 npm install -g @google/gemini-cli
 gemini auth login
-echo "hola" | gemini   # verificar que funciona
 ```
 
 ### Ollama (opcional, modelos locales o remotos)
