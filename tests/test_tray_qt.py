@@ -11,7 +11,9 @@ from unittest.mock import patch
 try:
     from PyQt6.QtCore import QFileSystemWatcher
     from PyQt6.QtWidgets import QApplication
-except ImportError:  # pragma: no cover - exercised in CI only when PyQt6 is installed
+except ImportError as error:  # pragma: no cover - exercised in CI only when PyQt6 is installed
+    if os.environ.get("TALK2AI_REQUIRE_QT_TESTS") == "1":
+        raise
     QFileSystemWatcher = None
     QApplication = None
 
@@ -40,6 +42,8 @@ class TrayWatcherIntegrationTest(unittest.TestCase):
         self.tray_module.DEBUG_LOG_FILE = self.log
         self.reader = DebugLogReader()
         self.records = []
+        self.file_events = 0
+        self.directory_events = 0
 
         class Window:
             def isVisible(window_self):
@@ -53,11 +57,21 @@ class TrayWatcherIntegrationTest(unittest.TestCase):
         self.tray._debug_window = Window()
         self.watcher = QFileSystemWatcher([str(self.root)])
         self.tray._watcher = self.watcher
-        self.watcher.fileChanged.connect(self.tray._on_file_changed)
-        self.watcher.directoryChanged.connect(self.tray._on_directory_changed)
+
+        def on_file_changed(path):
+            self.file_events += 1
+            self.tray._on_file_changed(path)
+
+        def on_directory_changed(path):
+            self.directory_events += 1
+            self.tray._on_directory_changed(path)
+
+        self.watcher.fileChanged.connect(on_file_changed)
+        self.watcher.directoryChanged.connect(on_directory_changed)
 
     def tearDown(self):
         self.watcher.deleteLater()
+        self.app.processEvents()
         self.directory.cleanup()
 
     def wait_for_records(self, expected_count):
@@ -122,6 +136,7 @@ class TrayWatcherIntegrationTest(unittest.TestCase):
         with patch.object(self.tray_module, "clear_log", side_effect=PermissionError("denied")):
             window._clear()
         self.assertEqual(window.text.toPlainText(), "registro visible")
+        window._clear_error_message.close()
         window.close()
 
     def test_watcher_recovers_after_replace_delete_recreate_and_rotation(self):
@@ -137,18 +152,21 @@ class TrayWatcherIntegrationTest(unittest.TestCase):
             stream.write(serialize_event(3, "A", "inmediato").encode())
         self.wait_for_records(3)
         self.assert_log_watched()
+        self.assertGreater(self.file_events + self.directory_events, 0)
 
         self.log.unlink()
         self.wait_for_records(3)
         self.log.write_bytes(serialize_event(4, "A", "recreado").encode())
         self.wait_for_records(4)
         self.assert_log_watched()
+        self.assertGreater(self.directory_events, 0)
 
         rotated = self.root / "debug.log.1"
         os.replace(self.log, rotated)
         self.log.write_bytes(serialize_event(5, "A", "rotado").encode())
         self.wait_for_records(5)
         self.assert_log_watched()
+        self.assertGreater(self.directory_events, 0)
         self.assertEqual([record[2] for record in self.records],
                          ["normal", "reemplazado", "inmediato", "recreado", "rotado"])
 

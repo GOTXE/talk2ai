@@ -18,6 +18,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install Qt integration dependency
         run: python -m pip install PyQt6
+      - name: Verify Qt integration prerequisites
+        env:
+          QT_QPA_PLATFORM: offscreen
+          TALK2AI_REQUIRE_QT_TESTS: "1"
+        run: |
+          python - <<'PY'
+          import traceback
+          try:
+              from PyQt6.QtCore import QFileSystemWatcher
+              from PyQt6.QtWidgets import QApplication
+              app = QApplication([])
+              watcher = QFileSystemWatcher()
+              app.processEvents()
+              assert watcher is not None
+          except BaseException:
+              traceback.print_exc()
+              raise
+          PY
       - name: Bash syntax
         run: bash -n install.sh scripts/talk2ai-daemon scripts/talk2ai-handler scripts/talk2ai-keys scripts/talk2ai-control
       - name: Python syntax
@@ -25,4 +43,13 @@ jobs:
       - name: Regression tests
         env:
           QT_QPA_PLATFORM: offscreen
+          TALK2AI_REQUIRE_QT_TESTS: "1"
         run: python -m unittest discover -s tests -v
+      - name: Qt integration stress (20 runs)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          TALK2AI_REQUIRE_QT_TESTS: "1"
+        run: |
+          for run in $(seq 1 20); do
+            python -m unittest tests.test_tray_qt -v
+          done
