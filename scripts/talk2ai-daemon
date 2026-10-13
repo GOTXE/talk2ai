@@ -35,8 +35,14 @@ NC='\033[0m'
 
 _speak() {
     local text="$1"
+    # The broker owns serialization, cancellation and engine fallback. Keep a
+    # direct eSpeak fallback for installations upgraded before its service.
+    if command -v talk2ai-tts >/dev/null 2>&1 && \
+       printf '%s' "$text" | talk2ai-tts speak >/dev/null 2>&1; then
+        return 0
+    fi
     local ssml
-    ssml=$(printf '%s' "$text" | sed 's/Stephen Hawking/<lang xml:lang="en">Stephen Hawking<\/lang>/gi')
+    ssml=$(printf '%s' "$text" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/Stephen Hawking/<lang xml:lang="en">Stephen Hawking<\/lang>/gi')
     espeak-ng -v "$LANGUAGE" -m -s 140 -p 40 "$ssml" 2>/dev/null
 }
 
@@ -220,15 +226,19 @@ main() {
             if [[ "$buffer" =~ [.!?:][[:space:]]*$ ]] || [ ${#buffer} -ge 150 ]; then
                 if [ -f "$DEBUG_FILE" ]; then
                     _phrases+=("${buffer## }")
-                else
-                    if $_first_speak; then _first_speak=false; fi
-                    _speak "${buffer## }" || break
                 fi
+                if $_first_speak; then _first_speak=false; fi
+                _spoken_now=$(printf '%s' "${buffer## }" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+                [ -z "$_spoken_now" ] || _speak "$_spoken_now" || break
                 buffer=""
             fi
         done < <(_run_driver "$TRANSCRIPTION")
 
-        [ -n "${buffer## }" ] && _phrases+=("${buffer## }")
+        if [ -n "${buffer## }" ]; then
+            _phrases+=("${buffer## }")
+            _spoken_tail=$(printf '%s' "${buffer## }" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+            [ -z "$_spoken_tail" ] || _speak "$_spoken_tail"
+        fi
         response="${response## }"
         _stderr=$(cat "$_err_tmp"); rm -f "$_err_tmp"
 
@@ -268,9 +278,8 @@ main() {
                 _ps=$(printf '%s' "$_p" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
                 [ -n "$_ps" ] && _phrases_spoken+=("$_ps")
             done
-            for _phrase in "${_phrases_spoken[@]}"; do
-                _speak "$_phrase"
-            done
+            # Fragments were queued in FIFO order while the driver streamed;
+            # they must not be synthesized a second time here.
         fi
 
         echo "idle" > "$STATE_FILE"

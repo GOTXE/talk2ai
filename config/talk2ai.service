@@ -1,7 +1,8 @@
 [Unit]
 Description=talk2ai — voice assistant daemon
-After=graphical-session.target
+After=graphical-session.target talk2ai-tts.service
 Wants=graphical-session.target
+Requires=talk2ai-tts.service
 
 [Service]
 Type=simple

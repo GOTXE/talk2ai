@@ -6,6 +6,21 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [Unreleased]
+
+### Añadido
+- Broker TTS con catálogo cerrado, cola FIFO, cancelación común, preferencias
+  independientes y selector/prueba desde el tray.
+- eSpeak-ng Retro como perfil por defecto/fallback; manifiesto de descarga
+  explícita y verificada para Kokoro-82M v1.0.
+- Inventario de procedencia y licencias en `THIRD_PARTY_NOTICES.md`.
+
+### Seguridad
+- Piper queda bloqueado mientras sus pesos no superen la revisión por
+  artefacto. No se descargan modelos ni runtimes neuronales automáticamente.
+
+---
+
 ## [1.5.0] — 2026-10-13
 
 ### Añadido

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "kokoro": {
+    "runtime": {
+      "package": "kokoro-onnx",
+      "version": "0.6.1",
+      "source": "https://pypi.org/project/kokoro-onnx/0.6.1/",
+      "wheel": "https://files.pythonhosted.org/packages/60/e1/a27e5a70a525a5ee1fd5357596f07b724d02ff317f134e86cb6e3d9db968/kokoro_onnx-0.6.1-py3-none-any.whl",
+      "sha256": "50c8de4950d601df41428ee5462a48c8a78bef441bf671f2492e070ef44d8a32",
+      "license": "MIT",
+      "note": "La instalación del runtime se deja al usuario hasta disponer de un lock completo y auditado de dependencias transitivas por plataforma."
+    },
+    "model": {
+      "name": "kokoro-v1.0.int8.onnx",
+      "version": "model-files-v1.1",
+      "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.int8.onnx",
+      "sha256": "ae315a79b623f244700e4afb9246c46a26066782e049ba174bf3ba433970ee9c",
+      "license": "Apache-2.0"
+    },
+    "voices": {
+      "name": "voices-v1.0.bin",
+      "version": "model-files-v1.1",
+      "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin",
+      "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+      "license": "Apache-2.0",
+      "contains": ["ef_dora", "em_alex", "em_santa"]
+    }
+  }
+}

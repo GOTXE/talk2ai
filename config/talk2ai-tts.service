@@ -1,0 +1,15 @@
+[Unit]
+Description=talk2ai TTS broker
+After=graphical-session.target
+PartOf=talk2ai.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/talk2ai-tts serve
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

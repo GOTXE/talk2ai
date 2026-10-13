@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": "espeak-retro",
+      "engine": "espeak-ng",
+      "voice": "es",
+      "label": "Retro (eSpeak-ng, español)",
+      "language": "es",
+      "default_speed": 140,
+      "license": "GPL-3.0-or-later",
+      "status": "available",
+      "distribution": "system-dependency"
+    },
+    {
+      "id": "kokoro-ef-dora",
+      "engine": "kokoro-onnx",
+      "voice": "ef_dora",
+      "label": "Dora (Kokoro, español)",
+      "language": "es",
+      "default_speed": 1.0,
+      "license": "Apache-2.0",
+      "status": "optional",
+      "distribution": "explicit-download"
+    },
+    {
+      "id": "kokoro-em-alex",
+      "engine": "kokoro-onnx",
+      "voice": "em_alex",
+      "label": "Alex (Kokoro, español)",
+      "language": "es",
+      "default_speed": 1.0,
+      "license": "Apache-2.0",
+      "status": "optional",
+      "distribution": "explicit-download"
+    },
+    {
+      "id": "kokoro-em-santa",
+      "engine": "kokoro-onnx",
+      "voice": "em_santa",
+      "label": "Santa (Kokoro, español)",
+      "language": "es",
+      "default_speed": 1.0,
+      "license": "Apache-2.0",
+      "status": "optional",
+      "distribution": "explicit-download"
+    },
+    {
+      "id": "piper-es-es-carlfm-x-low",
+      "engine": "piper",
+      "voice": "es_ES-carlfm-x_low",
+      "label": "Carlfm (Piper, español)",
+      "language": "es_ES",
+      "license": null,
+      "status": "blocked",
+      "reason": "Los pesos y sus condiciones de redistribución no están verificados en este proyecto.",
+      "distribution": "not-distributed"
+    },
+    {
+      "id": "piper-es-es-davefx-medium",
+      "engine": "piper",
+      "voice": "es_ES-davefx-medium",
+      "label": "DaveFX (Piper, español)",
+      "language": "es_ES",
+      "license": null,
+      "status": "blocked",
+      "reason": "No habilitado: la licencia del dataset no acredita por sí sola los pesos ONNX y su redistribución.",
+      "distribution": "not-distributed"
+    },
+    {
+      "id": "piper-es-es-sharvard-medium",
+      "engine": "piper",
+      "voice": "es_ES-sharvard-medium",
+      "label": "Sharvard (Piper, español)",
+      "language": "es_ES",
+      "license": null,
+      "status": "blocked",
+      "reason": "No habilitado: falta evidencia verificable de licencia de los pesos y de ambos speakers.",
+      "distribution": "not-distributed"
+    }
+  ]
+}

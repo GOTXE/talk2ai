@@ -160,6 +160,38 @@ TALK2AI_CONTEXT_FILE=~/.talk2ai/context/$DRIVER.md \
 espeak-ng "instalación completada"
 ```
 
+## Voz / TTS opcional
+
+`install.sh` deja eSpeak-ng Retro configurado y no descarga pesos, wheels ni
+voces. Esto funciona igual en CachyOS/Arch y Debian/Ubuntu; ambos instaladores
+incluyen `alsa-utils` y el soporte de venv, pero no modifican el Python global.
+
+```bash
+talk2ai-tts list
+talk2ai-tts test espeak-retro
+talk2ai-tts download kokoro-ef-dora --confirm
+```
+
+La última orden sólo descarga `kokoro-v1.0.int8.onnx` y `voices-v1.0.bin` a la
+caché privada después de comprobar sus SHA-256; nunca sobrescribe un fichero
+que no coincida. Las tres voces españolas de Kokoro comparten ese paquete de
+voces. Para usarlo hace falta además el runtime aislado
+`~/.talk2ai/tts-venv`: su instalación automática está deliberadamente
+deshabilitada mientras falta un lock auditado de las dependencias transitivas
+por plataforma. No instales paquetes TTS en el Python de sistema para saltar
+esta barrera.
+
+Piper no se instala ni se habilita. En concreto DaveFX y Sharvard continúan
+bloqueados; Carlfm también queda bloqueado hasta verificar los derechos de los
+pesos. Consulta [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) antes de
+revisar o ampliar el catálogo.
+
+Para detener cualquier motor, síntesis pendiente y reproducción:
+
+```bash
+talk2ai-tts cancel
+```
+
 ---
 
 ## Troubleshooting

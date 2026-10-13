@@ -51,13 +51,13 @@ step "1/7  Dependencias del sistema"
 if command -v pacman &>/dev/null; then
     PKG_MANAGER="pacman"
     INSTALL_CMD="sudo pacman -S --needed --noconfirm"
-    PKGS=(xdotool ydotool espeak-ng sqlite3 xbindkeys
-          python-pyqt6 python-dbus python-gobject python-evdev)
+    PKGS=(xdotool ydotool espeak-ng alsa-utils sqlite3 xbindkeys
+          python-pyqt6 python-dbus python-gobject python-evdev python-virtualenv)
 elif command -v apt &>/dev/null; then
     PKG_MANAGER="apt"
     INSTALL_CMD="sudo apt install -y"
-    PKGS=(xdotool ydotool espeak-ng sqlite3 xbindkeys
-          python3-pyqt6 python3-dbus python3-gi python3-evdev)
+    PKGS=(xdotool ydotool espeak-ng alsa-utils sqlite3 xbindkeys
+          python3-pyqt6 python3-dbus python3-gi python3-evdev python3-venv)
 else
     warn "Gestor de paquetes no reconocido. Instala manualmente:"
     warn "  xdotool ydotool espeak-ng sqlite3 xbindkeys"
@@ -171,12 +171,23 @@ step "4/7  Instalar scripts y drivers"
 
 mkdir -p "$BIN_DIR" "$TALK2AI_DIR/ia"
 
-SCRIPTS=(talk2ai-daemon talk2ai-handler talk2ai-tray talk2ai-keys talk2ai-control)
+SCRIPTS=(talk2ai-daemon talk2ai-handler talk2ai-tray talk2ai-keys talk2ai-control talk2ai-tts talk2ai-tts-kokoro)
 for s in "${SCRIPTS[@]}"; do
     cp "$REPO_DIR/scripts/$s" "$BIN_DIR/$s"
     chmod +x "$BIN_DIR/$s"
     ok "$s → $BIN_DIR/$s"
 done
+
+# Catálogo cerrado y manifiesto de hashes. Se conservan elecciones del usuario
+# y no se descarga ningún modelo ni runtime neuronal durante la instalación.
+for tts_config in tts-catalog.json tts-artifacts.json; do
+    [ -f "$TALK2AI_DIR/$tts_config" ] || cp "$REPO_DIR/config/$tts_config" "$TALK2AI_DIR/$tts_config"
+done
+[ -f "$TALK2AI_DIR/tts-engine" ] || echo "espeak-ng" > "$TALK2AI_DIR/tts-engine"
+[ -f "$TALK2AI_DIR/tts-voice" ] || echo "es" > "$TALK2AI_DIR/tts-voice"
+[ -f "$TALK2AI_DIR/tts-speed" ] || echo "140" > "$TALK2AI_DIR/tts-speed"
+mkdir -p "$TALK2AI_DIR/tts/tmp"
+ok "TTS Retro configurado; Kokoro sigue como descarga explícita y verificada"
 
 # Drivers de IA
 for driver_src in "$REPO_DIR/config/ia/"*; do
@@ -199,6 +210,7 @@ step "5/7  Configurar servicio systemd"
 mkdir -p "$SYSTEMD_DIR" "$AUTOSTART_DIR"
 
 cp "$REPO_DIR/config/talk2ai.service"      "$SYSTEMD_DIR/talk2ai.service"
+cp "$REPO_DIR/config/talk2ai-tts.service"  "$SYSTEMD_DIR/talk2ai-tts.service"
 cp "$REPO_DIR/config/talk2ai-tray.desktop" "$AUTOSTART_DIR/talk2ai-tray.desktop"
 ok "talk2ai.service instalado"
 ok "talk2ai-tray.desktop instalado (autostart)"
@@ -210,7 +222,7 @@ if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable talk2ai.service
+systemctl --user enable talk2ai-tts.service talk2ai.service
 info "Iniciando servicio..."
 systemctl --user restart talk2ai.service
 sleep 2

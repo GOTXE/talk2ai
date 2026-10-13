@@ -6,6 +6,9 @@
 ![Wayland](https://img.shields.io/badge/Wayland-compatible-00ADEF?logo=wayland&logoColor=white)
 ![X11](https://img.shields.io/badge/X11-compatible-F05032?logo=x.org&logoColor=white)
 [![Handy](https://img.shields.io/badge/Handy-STT_local-FF6B6B?logo=microphone&logoColor=white)](https://handy.computer)
+[![eSpeak-ng](https://img.shields.io/badge/eSpeak--ng-Retro_TTS-5A5A5A)](https://github.com/espeak-ng/espeak-ng)
+[![Kokoro](https://img.shields.io/badge/Kokoro--82M-TTS_opcional-7C3AED)](https://huggingface.co/hexgrad/Kokoro-82M)
+[![Piper](https://img.shields.io/badge/Piper-bloqueado_por_licencia-B91C1C)](https://github.com/OHF-Voice/piper1-gpl)
 [![Gemini / AGY](https://img.shields.io/badge/Gemini_AGY-driver_por_defecto-4285F4?logo=google&logoColor=white)](https://antigravity.google)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue?logo=gnu&logoColor=white)
 
@@ -36,7 +39,7 @@ El modo persiste hasta que lo cambias. Puedes alternar entre ambos en cualquier 
 |---|---|---|
 | [**Handy**](https://handy.computer) | Transcripción voz→texto (Whisper local) | 100 % local |
 | **Driver de IA** (IA CLI) | Procesamiento de la consulta | Requiere internet |
-| **espeak-ng** | Síntesis de voz texto→audio | 100 % local |
+| **TTS** | eSpeak-ng Retro; Kokoro opcional con descarga verificada | 100 % local |
 | **ydotool / xdotool** | Inyección de texto en la ventana activa (Wayland/X11) | 100 % local |
 | **talk2ai-daemon** | Supervisor, polling IA, keepalive de atajos | — |
 | **talk2ai-handler** | Script externo de Handy para modo dictado | — |
@@ -54,7 +57,29 @@ El modo persiste hasta que lo cambias. Puedes alternar entre ambos en cualquier 
 - **Wayland y X11** — `ydotool` en Wayland, `xdotool` en X11
 - **Autostart** — servicio systemd + desktop entry para arrancar con la sesión
 
-> **Nota:** en modo IA la consulta viaja a los servidores del proveedor del driver activo (a menos que uses un driver local como Ollama). El audio de respuesta siempre se sintetiza localmente con espeak-ng.
+> **Nota:** en modo IA la consulta viaja a los servidores del proveedor del driver activo (a menos que uses un driver local como Ollama). El audio se sintetiza localmente: eSpeak-ng Retro es el valor por defecto y fallback; Kokoro sólo se activa tras una instalación explícita y verificada.
+
+## Voz / TTS
+
+La elección de voz es independiente del driver y modelo de IA. El menú del
+tray **Voz / TTS** permite seleccionar un perfil del catálogo y reproducir una
+frase fija sin consultar al LLM. Las preferencias se guardan en
+`~/.talk2ai/tts-engine`, `tts-voice` y `tts-speed`.
+
+eSpeak-ng Retro (`es`, velocidad 140, tono 40) funciona sin modelos y es el
+fallback. Las voces Kokoro `ef_dora`, `em_alex` y `em_santa` requieren una
+descarga consciente y con SHA-256:
+
+```bash
+talk2ai-tts download kokoro-ef-dora --confirm
+talk2ai-tts list
+```
+
+El catálogo no instala ni descarga modelos durante `install.sh`. Piper y sus
+voces permanecen visibles sólo como bloqueadas: no se activan ni descargan.
+El runtime Python de Kokoro se mantiene en `~/.talk2ai/tts-venv`; la instalación
+automática sigue bloqueada hasta publicar un lock transitorio por plataforma
+que esté revisado íntegramente.
 
 ## Requisitos
 
@@ -135,7 +160,7 @@ Descarga **Parakeet v3** (transcripción offline en español e inglés, rápido 
 | `Alt+Super+G` | Cambiar a modo IA |
 | `Alt+Super+H` | Cambiar a modo Dictado |
 | `Ctrl+Space` | Toggle grabación (1ª pulsación = grabar, 2ª = transcribir) |
-| `Ctrl+Alt+Q` | Detener audio (espeak-ng) inmediatamente |
+| `Ctrl+Alt+Q` | Detener síntesis, reproducción y cola TTS inmediatamente |
 
 ## Estructura del repositorio
 
@@ -199,6 +224,13 @@ espeak-ng "prueba"        # verificar audio
 ## Reconocimientos
 
 - [**Handy**](https://handy.computer) de [CJ Pais](https://github.com/cjpais) — transcripción voz→texto local. Distribuido bajo [licencia MIT](https://github.com/cjpais/Handy/blob/main/LICENSE).
+
+## Componentes externos, licencias y atribuciones
+
+Consulta [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) para el inventario,
+estado de aprobación, procedencia, hashes y obligaciones de cada motor, voz,
+dependencia e imagen. Los badges no son una concesión de marcas ni sustituyen
+los avisos de licencia.
 
 ## Licencia
 

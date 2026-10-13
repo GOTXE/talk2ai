@@ -6,6 +6,6 @@
 "echo dictate > /tmp/handy-mode && notify-send 'Handy' '⌨️ Modo Dictado' -t 1500"
   Mod1+Mod4+h
 
-# Detener audio espeak-ng
-"pkill -f espeak-ng"
+# Detener síntesis, reproducción y cola TTS (incluye fallback de upgrades)
+"talk2ai-tts cancel >/dev/null 2>&1; pkill -f espeak-ng"
   Control+Mod1+q

@@ -3,6 +3,7 @@
 
 import os
 import sys
+import json
 import subprocess
 import threading
 from datetime import datetime
@@ -28,6 +29,9 @@ DEBUG_LOG_FILE     = TALK2AI_DIR / "debug.log"
 MODEL_FILE         = TALK2AI_DIR / "model"
 OLLAMA_HOST_FILE   = TALK2AI_DIR / "ollama-host"
 VERSION_FILE       = TALK2AI_DIR / "version"
+TTS_ENGINE_FILE    = TALK2AI_DIR / "tts-engine"
+TTS_VOICE_FILE     = TALK2AI_DIR / "tts-voice"
+TTS_BIN            = "talk2ai-tts"
 SERVICE            = "talk2ai.service"
 GITHUB_API_LATEST  = "https://api.github.com/repos/GOTXE/talk2ai/releases/latest"
 GITHUB_RELEASES    = "https://github.com/GOTXE/talk2ai/releases"
@@ -190,15 +194,25 @@ def make_icon(mode, driver, all_ok, beat_scale=1.0):
         p.setFont(font)
         p.drawText(1, 1, 46, 46, Qt.AlignmentFlag.AlignCenter, "H")
     elif driver == "gemini":
-        p.setBrush(QBrush(QColor("#0D0D1A")))
+        # Neutral, project-drawn marker: do not reuse a provider logo.
+        p.setBrush(QBrush(QColor("#274690")))
         p.drawEllipse(1, 1, 46, 46)
         p.setClipping(False)
-        _gemini_renderer().render(p, QRectF(2, 2, 44, 44))
+        p.setPen(QColor("white"))
+        font = QFont("Sans Serif", 20)
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(1, 1, 46, 46, Qt.AlignmentFlag.AlignCenter, "G")
     elif driver == "ollama":
-        p.setBrush(QBrush(QColor("#0D0D0D")))
+        # Neutral, project-drawn marker: do not reuse a provider logo.
+        p.setBrush(QBrush(QColor("#404040")))
         p.drawEllipse(1, 1, 46, 46)
         p.setClipping(False)
-        _ollama_renderer().render(p, QRectF(5, 3, 38, 42))
+        p.setPen(QColor("white"))
+        font = QFont("Sans Serif", 20)
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(1, 1, 46, 46, Qt.AlignmentFlag.AlignCenter, "O")
     else:
         # Icono genérico: círculo con inicial del driver en mayúscula
         p.setBrush(QBrush(QColor("#333")))
@@ -448,6 +462,13 @@ class TalkTray:
 
         self.menu.addSeparator()
 
+        self._tts_menu = QMenu("🔊  Voz / TTS", self.menu)
+        self._tts_menu.aboutToShow.connect(self._on_tts_menu_show)
+        self._tts_menu.addAction("  Cargando catálogo…").setEnabled(False)
+        self.menu.addMenu(self._tts_menu)
+
+        self.menu.addSeparator()
+
         act_g = self.menu.addAction("🤖  Modo IA           Alt+Super+G")
         act_g.triggered.connect(lambda: self._set_mode("ai"))
 
@@ -461,7 +482,7 @@ class TalkTray:
         act_stop_rec.triggered.connect(self._stop_recording)
 
         act_stop = self.menu.addAction("⏸️   Detener audio      Ctrl+Alt+Q")
-        act_stop.triggered.connect(lambda: subprocess.Popen(["pkill", "-f", "espeak-ng"]))
+        act_stop.triggered.connect(self._stop_audio)
 
         self.menu.addSeparator()
 
@@ -570,6 +591,51 @@ class TalkTray:
             except subprocess.TimeoutExpired:
                 subprocess.run(["pkill", "-9", "-x", "handy"], capture_output=True)
         threading.Thread(target=_do, daemon=True).start()
+
+    def _stop_audio(self):
+        """Cancel synthesis and its FIFO without blocking the Qt event loop."""
+        subprocess.Popen([TTS_BIN, "cancel"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+        # Compatibility for a daemon upgraded before the broker starts.
+        subprocess.Popen(["pkill", "-f", "espeak-ng"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+
+    def _on_tts_menu_show(self):
+        self._tts_menu.clear()
+        try:
+            completed = subprocess.run([TTS_BIN, "list", "--json"], capture_output=True,
+                                       text=True, timeout=2)
+            profiles = json.loads(completed.stdout) if completed.returncode == 0 else []
+        except Exception:
+            profiles = []
+        if not profiles:
+            action = self._tts_menu.addAction("  TTS no disponible: inicia talk2ai-tts.service")
+            action.setEnabled(False)
+            return
+        engine = TTS_ENGINE_FILE.read_text().strip() if TTS_ENGINE_FILE.exists() else "espeak-ng"
+        voice = TTS_VOICE_FILE.read_text().strip() if TTS_VOICE_FILE.exists() else "es"
+        for profile in profiles:
+            selected = profile["engine"] == engine and profile["voice"] == voice
+            label = ("✓ " if selected else "  ") + profile["label"]
+            if profile["available"]:
+                action = self._tts_menu.addAction(label)
+                action.triggered.connect(lambda checked=False, ident=profile["id"]: self._select_tts(ident))
+                test = self._tts_menu.addAction(f"    Probar {profile['label']}")
+                test.triggered.connect(lambda checked=False, ident=profile["id"]: self._test_tts(ident))
+            else:
+                action = self._tts_menu.addAction(f"{label} — no disponible")
+                action.setEnabled(False)
+                reason = self._tts_menu.addAction(f"    {profile['availability_reason']}")
+                reason.setEnabled(False)
+
+    def _select_tts(self, profile_id: str):
+        subprocess.Popen([TTS_BIN, "select", profile_id], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+
+    def _test_tts(self, profile_id: str):
+        # Fixed text and a direct broker request: no LLM consultation.
+        subprocess.Popen([TTS_BIN, "test", profile_id], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
 
     def _get_ollama_host(self) -> str:
         try:

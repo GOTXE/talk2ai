@@ -7,6 +7,31 @@
 
 ## Visión general de componentes
 
+## Síntesis TTS multimotor
+
+El TTS es un subsistema independiente del STT y de los drivers de IA. El daemon
+no selecciona binarios ni voces: entrega texto por entrada estándar a
+`talk2ai-tts`, que lo reenvía por socket Unix a un broker de usuario. El broker
+posee la cola FIFO y los grupos de proceso; por tanto, una respuesta en
+streaming conserva orden y `Ctrl+Alt+Q` vacía la cola, termina el reproductor y
+la síntesis activa (TERM y, si no sale, KILL).
+
+```
+driver IA (stdout) -> daemon (segmenta, retira [ENLACE]) -> talk2ai-tts speak
+    -> socket Unix -> broker FIFO -> adaptador cerrado -> reproductor
+Ctrl+Alt+Q / tray -> talk2ai-tts cancel -> cola + grupo de proceso
+```
+
+Los ficheros `tts-engine`, `tts-voice`, `tts-speed`, `tts-state` y `tts-error`
+viven en `~/.talk2ai/` y no modifican `driver` ni `model`. Un perfil inválido,
+un modelo ausente o un fallo neuronal vuelve a eSpeak-ng Retro. El catálogo no
+acepta ejecutables, rutas o voces proporcionadas por el texto de la IA.
+
+Kokoro se ejecuta, cuando está instalado, en `~/.talk2ai/tts-venv` y un worker
+persistente conserva el modelo entre frases. La cola aplica un umbral de 150
+caracteres para no enviar fragmentos diminutos. Los temporales WAV son privados
+y se eliminan tras reproducción/cancelación.
+
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
 ║                        USUARIO / TECLADO                            ║
@@ -50,7 +75,7 @@
               │                      driver de IA
               │                   (streaming stdout)
               │                            │
-              │                     espeak-ng (TTS)
+              │                     broker TTS (cola FIFO)
               │                     + notify-send (enlaces)
               │
               └─── modo dictado ──► ydotool type
@@ -89,7 +114,7 @@
               │        └─ driver de IA — streaming de texto por stdout
               │
               ├─ acumula frases (. ! ? : o > 150 chars)
-              │   └─ espeak-ng -v es -m -s 140 -p 40  (voz)
+              │   └─ perfil TTS seleccionado; eSpeak Retro como fallback
               │
               ├─ detecta [ENLACE: url] en la respuesta
               │   ├─ notify-send con botón "Abrir" → xdg-open
@@ -234,7 +259,8 @@ systemd --user
 |---------------|----------------------------------------------|
 | `handy`        | STT (Whisper local), graba y transcribe — [handy.computer](https://handy.computer) |
 | driver de IA   | ejecutable en `~/.talk2ai/ia/` — Gemini AGY CLI (por defecto, `gemini-3.8-flash-low`) u Ollama |
-| `espeak-ng`    | TTS — síntesis de voz en español              |
+| `espeak-ng`    | TTS Retro/fallback — síntesis de voz en español |
+| `talk2ai-tts`  | Broker TTS — catálogo cerrado, cola, cancelación y fallback |
 | `ydotool`      | Inyección de teclado vía uinput (Wayland)     |
 | `xdotool`      | Inyección de teclado fallback (X11)           |
 | `xbindkeys`    | Atajos globales en X11                        |
