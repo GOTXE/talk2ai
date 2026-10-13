@@ -2,7 +2,7 @@
 
 ![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black)
 ![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.10--3.13-3776AB?logo=python&logoColor=white)
 ![Wayland](https://img.shields.io/badge/Wayland-compatible-00ADEF?logo=wayland&logoColor=white)
 ![X11](https://img.shields.io/badge/X11-compatible-F05032?logo=x.org&logoColor=white)
 [![Handy](https://img.shields.io/badge/Handy-STT_local-FF6B6B?logo=microphone&logoColor=white)](https://handy.computer)
@@ -93,7 +93,7 @@ mezclar unidades.
 ## Requisitos
 
 - **SO:** Linux x86_64 (KDE Plasma recomendado; otros escritorios soportados)
-- **Python:** 3.10+
+- **Python:** 3.10–3.13 (versiones verificadas en CI)
 - [**Handy**](https://handy.computer) AppImage en PATH como `handy`
 - [**Antigravity AGY / Gemini CLI**](https://antigravity.google) en PATH y autenticado (`agy` o `gemini`) (driver por defecto, modelo `gemini-3.8-flash-low`)
 

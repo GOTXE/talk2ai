@@ -17,7 +17,7 @@
 - **SO:** Linux x86_64 (probado en CachyOS/Arch; compatible con otras distribuciones)
 - **Escritorio:** KDE Plasma (recomendado); otros entornos soportados
 - **Sesión:** Wayland o X11
-- **Python:** 3.10+
+- **Python:** 3.10–3.13 (versiones verificadas en CI)
 - **Micrófono:** funcional y accesible por PipeWire/PulseAudio
 
 ---
