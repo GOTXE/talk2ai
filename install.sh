@@ -215,7 +215,7 @@ step "4/7  Instalar scripts y drivers"
 
 mkdir -p "$BIN_DIR" "$TALK2AI_DIR/ia" "$TTS_DATA_DIR"
 
-SCRIPTS=(talk2ai-daemon talk2ai-handler talk2ai-tray talk2ai-keys talk2ai-control talk2ai-tts talk2ai-tts-kokoro)
+SCRIPTS=(talk2ai-daemon talk2ai-handler talk2ai-tray talk2ai-keys talk2ai-control talk2ai-tts talk2ai-tts-kokoro talk2ai_debug_log.py)
 for s in "${SCRIPTS[@]}"; do
     cp "$REPO_DIR/scripts/$s" "$BIN_DIR/$s"
     chmod +x "$BIN_DIR/$s"

@@ -11,6 +11,7 @@ MODEL_FILE="$TALK2AI_DIR/model"
 STATE_FILE="$TALK2AI_DIR/ai-state"
 DEBUG_FILE="$TALK2AI_DIR/debug"
 DEBUG_LOG="$TALK2AI_DIR/debug.log"
+DEBUG_WRITER="${TALK2AI_DEBUG_WRITER:-$(dirname "${BASH_SOURCE[0]}")/talk2ai_debug_log.py}"
 ERROR_LOG="$TALK2AI_DIR/errors.log"
 VOICE_PROMPT="$TALK2AI_DIR/voice-prompt.md"
 LAST_ID=0
@@ -200,6 +201,11 @@ _normalize_tts_text() {
         sed 's/\[ENLACE:[^]]*\]//g; s/[[:space:]][[:space:]]*/ /g; s/^ //;s/ $//'
 }
 
+_debug_log_event() {
+    local timestamp="$1" event_type="$2" text="$3"
+    printf '%s' "$text" | python3 "$DEBUG_WRITER" "$DEBUG_LOG" "$timestamp" "$event_type"
+}
+
 _cleanup_turn_driver() {
     local temporary_dir="$1"
     [ -n "$temporary_dir" ] && [ -d "$temporary_dir" ] || return 0
@@ -288,11 +294,9 @@ main() {
             else
                 _dbg_model="${DRIVER_MODELS[$_dbg_driver]:-$AI_MODEL}"
             fi
-            {
-                echo "$_T_START|SEP|"
-                echo "$_T_START|INFO|Modelo: $_dbg_model  ·  Driver: $_dbg_driver"
-                echo "$_T_START|Q|$TRANSCRIPTION"
-            } >> "$DEBUG_LOG"
+            _debug_log_event "$_T_START" SEP "" || true
+            _debug_log_event "$_T_START" INFO "Modelo: $_dbg_model  ·  Driver: $_dbg_driver" || true
+            _debug_log_event "$_T_START" Q "$TRANSCRIPTION" || true
         fi
 
         _driver_tmp_dir=$(mktemp -d)
@@ -395,12 +399,10 @@ main() {
             printf '%b✅ %s%b\n' "$GREEN" "$response" "$NC"
             if [ -f "$DEBUG_FILE" ]; then
                 _T_END=$(date +%s%3N)
-                {
-                    echo "$_T_END|A|$response"
-                    for _l in "${_links[@]}"; do
-                        echo "$_T_END|L|$_l"
-                    done
-                } >> "$DEBUG_LOG"
+                _debug_log_event "$_T_END" A "$response" || true
+                for _l in "${_links[@]}"; do
+                    _debug_log_event "$_T_END" L "$_l" || true
+                done
             fi
             for _l in "${_links[@]}"; do
                 # Notificación con botón Abrir — se gestiona en subshell desacoplado

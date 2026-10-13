@@ -135,7 +135,7 @@ reproducción/cancelación.
               │   ├─ notify-send con botón "Abrir" → xdg-open
               │   └─ debug.log  tipo L  (enlace clickable en tray)
               │
-              ├─ escribe respuesta en debug.log (tipo Q/A/STAT)
+              ├─ escribe respuesta en debug.log (tipo Q/A/L)
               │
               └─ escribe "idle" en ai-state
                   └─ talk2ai-tray vuelve al icono estático
@@ -192,10 +192,10 @@ reproducción/cancelación.
   │                   touch/unlink por: tray
   │                   comprobado por:  daemon, handler
   │
-  ├── debug.log     ← líneas  timestamp|tipo|texto
-  │                   tipos: SEP, INFO, Q, A, STAT, L, D
-  │                   escrito por: daemon (IA), handler (dictado)
-  │                   leído por:   tray (ventana debug)
+  ├── debug.log     ← JSONL: {timestamp, type, text}, un evento por línea física
+  │                   tipos: SEP, INFO, Q, A, L, D
+  │                   escrito por: daemon (IA), handler (dictado), con bloqueo común
+  │                   leído por:   tray (ventana debug); acepta también el formato heredado
   │
   ├── voice-prompt.md           ← prompt genérico (fallback para cualquier driver)
   ├── voice-prompt-<driver>.md  ← prompt específico por driver (opcional, tiene prioridad)

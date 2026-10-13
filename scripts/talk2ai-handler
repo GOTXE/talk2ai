@@ -19,9 +19,10 @@ export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-${XDG_RUNTIME_DIR}/.ydotool_socket}"
 
 DEBUG_FILE="$TALK2AI_DIR/debug"
 DEBUG_LOG="$TALK2AI_DIR/debug.log"
+DEBUG_WRITER="${TALK2AI_DEBUG_WRITER:-$(dirname "${BASH_SOURCE[0]}")/talk2ai_debug_log.py}"
 if [ -f "$DEBUG_FILE" ]; then
     _TS=$(date +%s%3N)
-    printf '%s|D|%s\n' "$_TS" "$TRANSCRIPTION" >> "$DEBUG_LOG"
+    printf '%s' "$TRANSCRIPTION" | python3 "$DEBUG_WRITER" "$DEBUG_LOG" "$_TS" D || true
 fi
 
 if [ -S "$YDOTOOL_SOCKET" ] && command -v ydotool &>/dev/null; then

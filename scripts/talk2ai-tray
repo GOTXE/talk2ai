@@ -19,6 +19,8 @@ from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QBrush,
 from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QThread, QFileSystemWatcher, QByteArray
 from PyQt6.QtSvg import QSvgRenderer
 
+from talk2ai_debug_log import DebugLogReader
+
 HANDY_DB           = Path(os.environ.get("HANDY_DB", str(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "com.pais.handy" / "history.db")))
 _legacy_dir       = Path.home() / ".talk2ai"
 TALK2AI_DIR        = Path(os.environ.get("TALK2AI_DIR") or
@@ -266,7 +268,7 @@ class DebugWindow(QWidget):
         self.setWindowTitle("talk2ai Debug — Preguntas y Respuestas")
         self.setWindowIcon(make_ai_icon())
         self.resize(750, 520)
-        self._line_count = 0
+        self._log_reader = DebugLogReader()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -296,34 +298,28 @@ class DebugWindow(QWidget):
 
     def _clear(self):
         self.text.clear()
-        self._line_count = 0
+        self._log_reader = DebugLogReader()
         try:
-            DEBUG_LOG_FILE.write_text("")
+            DEBUG_LOG_FILE.write_bytes(b"")
         except Exception:
             pass
 
     def load_all(self):
         self.text.clear()
-        self._line_count = 0
+        self._log_reader = DebugLogReader()
         self._read_new_lines()
 
     def _read_new_lines(self):
         try:
-            lines = DEBUG_LOG_FILE.read_text().splitlines()
-        except Exception:
+            records, truncated = self._log_reader.read_new(DEBUG_LOG_FILE)
+            if truncated:
+                self.text.clear()
+        except (OSError, ValueError):
             return
-        new_lines = lines[self._line_count:]
-        if not new_lines:
-            return
-        self._line_count = len(lines)
         import html as _html
-        for line in new_lines:
-            parts = line.split("|", 2)
-            if len(parts) != 3:
-                continue
-            ts, kind, text = parts
+        for ts, kind, text in records:
             try:
-                ms = int(ts)
+                ms = ts
                 if ms > 9_999_999_999:
                     dt = datetime.fromtimestamp(ms / 1000).strftime("%H:%M:%S") + f".{ms % 1000:03d}"
                 else:
@@ -336,31 +332,31 @@ class DebugWindow(QWidget):
             elif kind == "INFO":
                 frag = (
                     f'<span style="color:#616161">[{dt}]</span>&nbsp;'
-                    f'<span style="color:#9E9E9E">📋 {_html.escape(text)}</span>'
+                    f'<span style="color:#9E9E9E">📋 {_html.escape(text).replace(chr(10), "<br>")}</span>'
                 )
             elif kind == "L":
                 frag = (
                     f'<span style="color:#616161">[{dt}]</span>&nbsp;'
                     f'<span style="color:#FFB300">🔗</span>&nbsp;'
-                    f'<a href="{_html.escape(text)}" style="color:#80DEEA;">{_html.escape(text)}</a>'
+                    f'<a href="{_html.escape(text)}" style="color:#80DEEA;">{_html.escape(text).replace(chr(10), "<br>")}</a>'
                 )
             elif kind == "D":
                 frag = (
                     f'<span style="color:#616161">[{dt}]</span>&nbsp;'
                     f'<span style="color:{HANDY_PINK}"><b>[Dictado]</b></span>&nbsp;'
-                    f'<span style="color:#E0E0E0">{_html.escape(text)}</span>'
+                    f'<span style="color:#E0E0E0">{_html.escape(text).replace(chr(10), "<br>")}</span>'
                 )
             elif kind == "Q":
                 frag = (
                     f'<span style="color:#616161">[{dt}]</span>&nbsp;'
                     f'<span style="color:#4FC3F7"><b>[Tú]</b></span>&nbsp;'
-                    f'<span style="color:#E0E0E0">{_html.escape(text)}</span>'
+                    f'<span style="color:#E0E0E0">{_html.escape(text).replace(chr(10), "<br>")}</span>'
                 )
             elif kind == "A":
                 frag = (
                     f'<span style="color:#616161">[{dt}]</span>&nbsp;'
                     f'<span style="color:#A5D6A7"><b>[IA]</b></span>&nbsp;'
-                    f'<span style="color:#E0E0E0">{_html.escape(text)}</span>'
+                    f'<span style="color:#E0E0E0">{_html.escape(text).replace(chr(10), "<br>")}</span>'
                 )
             else:
                 continue
