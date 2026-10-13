@@ -186,6 +186,7 @@ class Broker:
         self.lock = threading.Lock()
         self.active: subprocess.Popen | None = None
         self.kokoro: subprocess.Popen | None = None
+        self.playing = False
         try:
             previous_generation = int((ROOT / "tts-cancel-generation").read_text().strip())
         except (OSError, ValueError):
@@ -282,6 +283,7 @@ class Broker:
                     threading.Thread(target=self._kill_if_needed, args=(process,), daemon=True).start()
             self.active = None
             self.kokoro = None
+            self.playing = False
             # Persist while holding the same lock used by enqueue.  A daemon
             # cannot observe a new epoch before it is safe to submit it.
             atomic_write(ROOT / "tts-cancel-generation", str(self.generation) + "\n")
@@ -295,8 +297,16 @@ class Broker:
             if supplied_generation is not None and supplied_generation != generation:
                 raise RuntimeError("turno TTS cancelado")
             self.requests.put((text, profile, generation))
-            atomic_write(ROOT / "tts-state", "queued\n")
+            # Do not hide active synthesis/playback behind a newly queued
+            # fragment.  The worker owns the speaking -> queued/idle
+            # transition once the current item finishes.
+            if not self.playing and not self._process_running(self.active) and not self._process_running(self.kokoro):
+                atomic_write(ROOT / "tts-state", "queued\n")
             return generation
+
+    @staticmethod
+    def _process_running(process: subprocess.Popen | None) -> bool:
+        return process is not None and process.poll() is None
 
     @staticmethod
     def _kill_if_needed(process: subprocess.Popen) -> None:
@@ -314,8 +324,11 @@ class Broker:
             text, profile, generation = self.requests.get()
             if not text:
                 continue
-            if not self.set_state_if_current(generation, "speaking"):
-                continue
+            with self.lock:
+                if generation != self.generation:
+                    continue
+                self.playing = True
+                atomic_write(ROOT / "tts-state", "speaking\n")
             try:
                 self.speak(text, profile, generation)
             except Exception as exc:
@@ -324,11 +337,16 @@ class Broker:
                 if profile["engine"] != "espeak-ng" and self.is_current(generation):
                     try:
                         self.speak(text, profile_by_id("espeak-retro"), generation)  # type: ignore[arg-type]
-                        self.set_state_if_current(generation, "fallback: espeak-retro")
-                        continue
                     except Exception as fallback:
                         self.write_if_current(generation, ROOT / "tts-error", f"{exc}; fallback: {fallback}\n")
-            self.set_state_if_current(generation, "idle")
+            with self.lock:
+                if self.playing and generation == self.generation:
+                    self.playing = False
+                    next_state = "queued" if not self.requests.empty() else "idle"
+                else:
+                    next_state = None
+            if next_state is not None:
+                self.set_state_if_current(generation, next_state)
 
     def set_state_if_current(self, generation: int, state: str) -> bool:
         """Publish a state only while its generation still owns the turn."""

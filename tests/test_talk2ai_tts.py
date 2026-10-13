@@ -255,6 +255,43 @@ class TtsBrokerTest(unittest.TestCase):
             self.assertIn("cancelled\n", states)
             self.assertNotIn("speaking\n", states)
 
+    def test_enqueue_does_not_hide_active_playback(self):
+        module = load_broker_module()
+        with mock.patch.object(module, "ROOT", self.state):
+            broker = module.Broker()
+            profile = {"engine": "espeak-ng", "voice": "es"}
+            module.atomic_write(self.state / "tts-state", "speaking\n")
+            broker.playing = True
+            broker.enqueue("siguiente", profile)
+            self.assertEqual((self.state / "tts-state").read_text(), "speaking\n")
+
+    def test_concurrent_enqueue_keeps_speaking_until_fifo_is_drained(self):
+        module = load_broker_module()
+        with mock.patch.object(module, "ROOT", self.state):
+            broker = module.Broker()
+            profile = {"engine": "espeak-ng", "voice": "es"}
+            entered = threading.Event()
+            release = threading.Event()
+
+            def speak(text, selected, generation):
+                if text == "primera":
+                    entered.set()
+                    release.wait(timeout=2)
+
+            broker.speak = speak
+            first = broker.enqueue("primera", profile)
+            worker = threading.Thread(target=broker.playback, daemon=True)
+            worker.start()
+            self.assertTrue(entered.wait(timeout=2))
+            broker.enqueue("segunda", profile, first)
+            self.assertEqual((self.state / "tts-state").read_text(), "speaking\n")
+            release.set()
+            for _ in range(100):
+                if (self.state / "tts-state").read_text() == "idle\n":
+                    break
+                time.sleep(0.01)
+            self.assertEqual((self.state / "tts-state").read_text(), "idle\n")
+
     def test_second_broker_cannot_take_an_active_socket(self):
         second = subprocess.run([str(TTS), "serve"], env=self.env, text=True,
                                 capture_output=True, timeout=4)
@@ -306,6 +343,11 @@ class DistributedFilesTest(unittest.TestCase):
         self.assertIn('EspeakG2P(language="es")', worker)
         self.assertIn("is_phonemes=True", worker)
         self.assertNotIn('lang="e"', worker)
+
+    def test_daemon_does_not_reserve_fifo_paths_with_mktemp_u(self):
+        daemon = (REPO / "scripts" / "talk2ai-daemon").read_text(encoding="utf-8")
+        self.assertNotIn("mktemp -u", daemon)
+        self.assertIn("mktemp -d", daemon)
 
     def test_daemon_never_uses_unbound_tail_or_error_fallback(self):
         daemon = (REPO / "scripts" / "talk2ai-daemon").read_text(encoding="utf-8")

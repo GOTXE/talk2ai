@@ -136,6 +136,11 @@ _run_driver() {
 _stop_turn_driver() {
     local driver_pid monitor_pid pid_file="$1"
     monitor_pid="$2"
+    local stopped_file="${pid_file}.stopped"
+    # A turn has one owner for its process group.  This marker makes cleanup
+    # idempotent and prevents a repeated cancel from signalling a reused PID.
+    [ -e "$stopped_file" ] && return 0
+    : > "$stopped_file"
     driver_pid=$(cat "$pid_file" 2>/dev/null || true)
     if [[ "$driver_pid" =~ ^[0-9]+$ ]]; then
         kill -TERM -- "-$driver_pid" 2>/dev/null || true
@@ -155,6 +160,30 @@ _stop_turn_driver() {
     fi
     kill -KILL "$monitor_pid" 2>/dev/null || true
     wait "$monitor_pid" 2>/dev/null || true
+}
+
+# Read one character at a time so a driver may stream tokens without newline
+# delimiters.  Bash read returns >128 on timeout and 1 on EOF; in both cases
+# it may still have placed a partial character in the variable.
+_read_driver_char() {
+    _driver_char=""
+    IFS= read -r -t 0.2 -N 1 _driver_char <&"$_driver_fd"
+    local status=$?
+    if [ "$status" -eq 0 ]; then
+        return 0
+    elif [ "$status" -gt 128 ]; then
+        return 2  # timeout; _driver_char is still valid if Bash returned one
+    elif [ "$status" -eq 1 ]; then
+        return 1  # EOF; _driver_char is still valid if this was a final byte
+    fi
+    return 3      # an actual read error
+}
+
+_cleanup_turn_driver() {
+    local temporary_dir="$1"
+    [ -n "$temporary_dir" ] && [ -d "$temporary_dir" ] || return 0
+    [ -f "$temporary_dir/.talk2ai-turn" ] || return 0
+    rm -rf -- "$temporary_dir"
 }
 
 main() {
@@ -245,7 +274,12 @@ main() {
             } >> "$DEBUG_LOG"
         fi
 
-        _err_tmp=$(mktemp)
+        _driver_tmp_dir=$(mktemp -d)
+        chmod 700 "$_driver_tmp_dir"
+        : > "$_driver_tmp_dir/.talk2ai-turn"
+        _err_tmp="$_driver_tmp_dir/driver.stderr"
+        _driver_fifo="$_driver_tmp_dir/driver.fifo"
+        _driver_pid_file="$_driver_tmp_dir/driver.pid"
         echo "processing" > "$STATE_FILE"
         buffer=""
         response=""
@@ -254,9 +288,6 @@ main() {
         _turn_generation=$(_cancel_generation)
         _turn_cancelled=false
 
-        _driver_fifo=$(mktemp -u)
-        _driver_pid_file=$(mktemp)
-        rm -f "$_driver_fifo"
         mkfifo "$_driver_fifo"
         _run_driver "$TRANSCRIPTION" >"$_driver_fifo" &
         _driver_monitor_pid=$!
@@ -268,16 +299,29 @@ main() {
                 _stop_turn_driver "$_driver_pid_file" "$_driver_monitor_pid"
                 break
             fi
-            if ! IFS= read -r -t 0.2 line <&"$_driver_fd"; then
+            _read_driver_char
+            _read_status=$?
+            if [ -n "$_driver_char" ]; then
+                # Newlines delimit driver records, but are not part of the
+                # answer.  Every other character is retained byte-for-byte
+                # in arrival order; in particular, do not invent spaces.
+                if [ "$_driver_char" != $'\n' ]; then
+                    buffer+="$_driver_char"
+                    response+="$_driver_char"
+                fi
+            fi
+            if [ "$_read_status" -eq 2 ]; then
                 if ! kill -0 "$_driver_monitor_pid" 2>/dev/null; then
                     break
                 fi
                 continue
+            elif [ "$_read_status" -eq 1 ]; then
+                break
+            elif [ "$_read_status" -ne 0 ]; then
+                _turn_cancelled=true
+                _stop_turn_driver "$_driver_pid_file" "$_driver_monitor_pid"
+                break
             fi
-            _line=$(printf '%s' "$line" | grep -v "Ripgrep\|Falling back\|not available" | sed 's/\*\*//g; s/\*//g; s/__//g; s/_//g; s/#//g')
-            [ -z "$_line" ] && continue
-            buffer+=" $_line"
-            response+=" $_line"
             if [[ "$buffer" =~ [.!?:][[:space:]]*$ ]] || [ ${#buffer} -ge 150 ]; then
                 if [ -f "$DEBUG_FILE" ]; then
                     _phrases+=("${buffer## }")
@@ -307,6 +351,7 @@ main() {
         fi
         response="${response## }"
         _stderr=$(cat "$_err_tmp"); rm -f "$_err_tmp"
+        _cleanup_turn_driver "$_driver_tmp_dir"
 
         # Extraer enlaces [ENLACE: url] del response antes de hablar
         _links=()
