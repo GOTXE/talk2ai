@@ -38,8 +38,6 @@ Versionado según [SemVer](https://semver.org/lang/es/).
   heredadas en `~/.talk2ai` siguen siendo compatibles.
 
 ### Seguridad
-- Piper queda bloqueado mientras sus pesos no superen la revisión por
-  artefacto. No se descargan modelos ni runtimes neuronales automáticamente.
 - Kokoro no se declara operativo: faltan un lock transitorio auditado y pruebas
   reales de las voces españolas, puntuación, números y reproducción.
 

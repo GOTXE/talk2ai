@@ -74,7 +74,6 @@ class TtsBrokerTest(unittest.TestCase):
         self.assertEqual(listing.returncode, 0, listing.stderr)
         profiles = {profile["id"]: profile for profile in json.loads(listing.stdout)}
         self.assertTrue(profiles["espeak-retro"]["available"])
-        self.assertFalse(profiles["piper-es-es-davefx-medium"]["available"])
         self.assertEqual((self.state / "tts-engine").read_text().strip(), "espeak-ng")
         self.assertEqual((self.state / "tts-voice").read_text().strip(), "es")
 
@@ -92,11 +91,6 @@ class TtsBrokerTest(unittest.TestCase):
         time.sleep(0.1)
         self.assertEqual(self.run_tts("cancel").returncode, 0)
         self.assertEqual((self.state / "tts-state").read_text().strip(), "cancelled")
-
-    def test_blocked_profile_cannot_be_selected_or_downloaded(self):
-        selected = self.run_tts("select", "piper-es-es-sharvard-medium")
-        self.assertNotEqual(selected.returncode, 0)
-        self.assertIn("no seleccionable", selected.stderr)
 
     def test_kokoro_is_not_advertised_without_a_real_validation(self):
         # Files and a placeholder interpreter do not validate Spanish G2P,

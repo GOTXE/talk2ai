@@ -8,7 +8,6 @@
 [![Handy](https://img.shields.io/badge/Handy-STT_local-FF6B6B?logo=microphone&logoColor=white)](https://handy.computer)
 [![eSpeak-ng](https://img.shields.io/badge/eSpeak--ng-Retro_TTS-5A5A5A)](https://github.com/espeak-ng/espeak-ng)
 [![Kokoro](https://img.shields.io/badge/Kokoro--82M-TTS_opcional-7C3AED)](https://huggingface.co/hexgrad/Kokoro-82M)
-[![Piper](https://img.shields.io/badge/Piper-bloqueado_por_licencia-B91C1C)](https://github.com/OHF-Voice/piper1-gpl)
 [![Gemini / AGY](https://img.shields.io/badge/Gemini_AGY-driver_por_defecto-4285F4?logo=google&logoColor=white)](https://antigravity.google)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue?logo=gnu&logoColor=white)
 
@@ -81,8 +80,7 @@ talk2ai-tts list
 
 El catálogo no instala ni descarga modelos durante `install.sh`. Sus archivos
 versionados se despliegan y actualizan en `${TALK2AI_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/talk2ai}`;
-las preferencias y el estado existentes permanecen en `$TALK2AI_DIR`. Piper y sus
-voces permanecen visibles sólo como bloqueadas: no se activan ni descargan.
+las preferencias y el estado existentes permanecen en `$TALK2AI_DIR`.
 El runtime Python de Kokoro se mantiene en `$TALK2AI_DIR/tts-venv`; su instalación
 automática sigue bloqueada hasta publicar un lock transitorio por plataforma
 que incluya `misaki` y todas sus dependencias, con hashes y avisos revisados.

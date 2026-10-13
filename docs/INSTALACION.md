@@ -183,11 +183,6 @@ deshabilitada mientras falta un lock auditado de las dependencias transitivas
 por plataforma. No instales paquetes TTS en el Python de sistema para saltar
 esta barrera.
 
-Piper no se instala ni se habilita. En concreto DaveFX y Sharvard continúan
-bloqueados; Carlfm también queda bloqueado hasta verificar los derechos de los
-pesos. Consulta [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) antes de
-revisar o ampliar el catálogo.
-
 Para detener cualquier motor, síntesis pendiente y reproducción:
 
 ```bash
