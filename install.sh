@@ -237,6 +237,7 @@ ok "TTS Retro configurado; Kokoro sigue como descarga explícita y verificada"
 
 # Drivers de IA
 for driver_src in "$REPO_DIR/config/ia/"*; do
+    [[ -f "$driver_src" ]] || continue
     driver_name="$(basename "$driver_src")"
     cp "$driver_src" "$TALK2AI_DIR/ia/$driver_name"
     chmod +x "$TALK2AI_DIR/ia/$driver_name"
@@ -379,6 +380,7 @@ done
 
 # Drivers
 for driver_src in "$REPO_DIR/config/ia/"*; do
+    [[ -f "$driver_src" ]] || continue
     driver_name="$(basename "$driver_src")"
     if [[ -x "$TALK2AI_DIR/ia/$driver_name" ]]; then
         ok "driver $driver_name instalado"
