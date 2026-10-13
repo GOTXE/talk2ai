@@ -6,6 +6,7 @@ import sys
 import json
 import subprocess
 import threading
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QThread, QFile
 from PyQt6.QtSvg import QSvgRenderer
 
 from talk2ai_debug_log import DebugLogReader, clear_log
+
+logger = logging.getLogger(__name__)
 
 HANDY_DB           = Path(os.environ.get("HANDY_DB", str(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "com.pais.handy" / "history.db")))
 _legacy_dir       = Path.home() / ".talk2ai"
@@ -300,7 +303,15 @@ class DebugWindow(QWidget):
         try:
             clear_log(DEBUG_LOG_FILE)
         except Exception:
-            pass
+            logger.exception("Unable to clear the debug log from the debug window")
+            message = QMessageBox(self)
+            message.setIcon(QMessageBox.Icon.Critical)
+            message.setWindowTitle("Depuración")
+            message.setText("No se pudo limpiar el registro de depuración.")
+            message.setInformativeText("Comprueba que el registro no esté siendo usado por otro proceso.")
+            message.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._clear_error_message = message
+            message.open()
         else:
             self.text.clear()
             self._log_reader = DebugLogReader()
@@ -406,6 +417,7 @@ class TalkTray:
         DRIVER_FILE.touch(exist_ok=True)
         self._watcher = QFileSystemWatcher([str(MODE_FILE), str(DRIVER_FILE), str(TALK2AI_DIR)])
         self._watcher.fileChanged.connect(self._on_file_changed)
+        self._watcher.directoryChanged.connect(self._on_directory_changed)
         if STATE_FILE.exists():
             self._watcher.addPath(str(STATE_FILE))
             try:
@@ -413,7 +425,7 @@ class TalkTray:
             except Exception:
                 pass
         if DEBUG_LOG_FILE.exists():
-            self._watcher.addPath(str(DEBUG_LOG_FILE))
+            self._watch_debug_log()
         if DEBUG_ENABLED_FILE.exists():
             self._debug_window = DebugWindow()
             self._debug_window.load_all()
@@ -522,21 +534,28 @@ class TalkTray:
         act_quit.triggered.connect(self.app.quit)
 
     def _on_file_changed(self, path):
-        if path == str(TALK2AI_DIR):
-            if DEBUG_LOG_FILE.exists() and str(DEBUG_LOG_FILE) not in self._watcher.files():
-                self._watcher.addPath(str(DEBUG_LOG_FILE))
-            if self._debug_window and self._debug_window.isVisible():
-                self._debug_window._read_new_lines()
-            return
         if path not in self._watcher.files() and Path(path).exists():
             self._watcher.addPath(path)
         if path == str(STATE_FILE):
             self._on_state_changed()
         elif path == str(DEBUG_LOG_FILE):
-            if self._debug_window and self._debug_window.isVisible():
-                self._debug_window._read_new_lines()
+            self._on_debug_log_changed()
         else:
             self._update_ui(get_mode(), get_driver(), self._status, self._all_ok)
+
+    def _on_directory_changed(self, path):
+        if path == str(TALK2AI_DIR):
+            self._on_debug_log_changed()
+
+    def _watch_debug_log(self):
+        path = str(DEBUG_LOG_FILE)
+        if DEBUG_LOG_FILE.exists() and path not in self._watcher.files():
+            self._watcher.addPath(path)
+
+    def _on_debug_log_changed(self):
+        self._watch_debug_log()
+        if self._debug_window and self._debug_window.isVisible():
+            self._debug_window._read_new_lines()
 
     def _on_state_changed(self):
         try:
@@ -560,16 +579,36 @@ class TalkTray:
 
     def _toggle_debug(self, checked):
         if checked:
-            clear_log(DEBUG_LOG_FILE)
-            DEBUG_ENABLED_FILE.touch()
-            self._watcher.addPath(str(DEBUG_LOG_FILE))
+            try:
+                clear_log(DEBUG_LOG_FILE)
+                DEBUG_ENABLED_FILE.touch()
+                self._watch_debug_log()
+            except Exception:
+                logger.exception("Unable to enable debug logging")
+                self.act_debug.setChecked(DEBUG_ENABLED_FILE.exists())
+                self.tray.showMessage(
+                    "Depuración",
+                    "No se pudo activar la depuración; el registro está bloqueado o no disponible.",
+                    QSystemTrayIcon.MessageIcon.Critical,
+                )
+                return
             if self._debug_window is None:
                 self._debug_window = DebugWindow()
             self._debug_window.load_all()
             self._debug_window.show()
             self._debug_window.raise_()
         else:
-            DEBUG_ENABLED_FILE.unlink(missing_ok=True)
+            try:
+                DEBUG_ENABLED_FILE.unlink(missing_ok=True)
+            except Exception:
+                logger.exception("Unable to disable debug logging")
+                self.act_debug.setChecked(DEBUG_ENABLED_FILE.exists())
+                self.tray.showMessage(
+                    "Depuración",
+                    "No se pudo desactivar la depuración.",
+                    QSystemTrayIcon.MessageIcon.Critical,
+                )
+                return
             if self._debug_window:
                 self._debug_window.hide()
         self.act_debug.setChecked(checked)

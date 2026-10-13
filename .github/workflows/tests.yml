@@ -16,9 +16,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install Qt integration dependency
+        run: python -m pip install PyQt6
       - name: Bash syntax
         run: bash -n install.sh scripts/talk2ai-daemon scripts/talk2ai-handler scripts/talk2ai-keys scripts/talk2ai-control
       - name: Python syntax
         run: python -m py_compile scripts/talk2ai-tts scripts/talk2ai-tray scripts/talk2ai-keys scripts/talk2ai-tts-kokoro tests/*.py
       - name: Regression tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -v
