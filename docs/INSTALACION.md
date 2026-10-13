@@ -83,7 +83,7 @@ Cualquier script ejecutable en `~/.talk2ai/ia/<nombre>` que siga el contrato de 
 
 ## Instalar talk2ai
 
-El instalador se encarga de todo: dependencias del sistema, scripts, servicio systemd, autostart, configuración automática de Handy y arranque del tray.
+El instalador se encarga de todo: dependencias del sistema, scripts, servicio systemd, autostart, configuración automática de Handy y arranque del tray. Usa `TALK2AI_DIR` si se define; si no, conserva una instalación existente en `~/.talk2ai` o usa `${XDG_STATE_HOME:-~/.local/state}/talk2ai` para una instalación nueva. Los catálogos van a `${TALK2AI_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/talk2ai}`.
 
 ```bash
 git clone https://github.com/GOTXE/talk2ai.git
@@ -93,11 +93,13 @@ bash install.sh
 
 El instalador realiza estos pasos:
 
-0. Detiene procesos previos y limpia el lock del tray
+0. Detiene procesos previos y sólo elimina el lock del tray después de verificar
+   que su PID terminó; si sigue activo, la instalación se detiene sin romper la
+   exclusión mutua
 1. Instala dependencias del sistema que falten (`xdotool`, `ydotool`, `espeak-ng`, etc.)
 2. Configura Handy automáticamente: `paste_method=external_script`, ruta del handler, atajo interno desactivado
 3. Informa sobre los drivers disponibles (Gemini y Ollama)
-4. Copia los scripts a `~/.local/bin/` **y los drivers** a `~/.talk2ai/ia/`; actualiza los catálogos TTS versionados en `${XDG_DATA_HOME:-~/.local/share}/talk2ai/` sin modificar las preferencias de voz
+4. Copia los scripts a `~/.local/bin/` **y los drivers** a `$TALK2AI_DIR/ia/`; actualiza los catálogos TTS versionados en `$TALK2AI_DATA_DIR` sin modificar las preferencias de voz
 5. Instala el servicio systemd y el autostart del tray
 6. Instala `voice-prompt.md` y ofrece instalar el contexto de personalidad
 7. Verifica que todo esté correcto (scripts, drivers, servicio, tray) y muestra un resumen; escribe `~/.talk2ai/version` con la versión instalada

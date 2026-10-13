@@ -2,6 +2,9 @@
 
 # Control de talk2ai con notificaciones y menú KDE
 
+_legacy_talk2ai_dir="$HOME/.talk2ai"
+TALK2AI_DIR="${TALK2AI_DIR:-$(if [ -d "$_legacy_talk2ai_dir" ]; then printf '%s' "$_legacy_talk2ai_dir"; else printf '%s/talk2ai' "${XDG_STATE_HOME:-$HOME/.local/state}"; fi)}"
+
 show_menu() {
     kdialog --title "talk2ai Control" \
             --menu "Selecciona una opción:" \
@@ -15,7 +18,7 @@ show_menu() {
 
 show_info() {
     kdialog --title "talk2ai - Información" \
-            --textbox /dev/stdin 400 300 << 'EOF'
+            --textbox /dev/stdin 400 300 << EOF
 ╔════════════════════════════════════════╗
 ║   TALK2AI — ASISTENTE DE VOZ           ║
 ╚════════════════════════════════════════╝
@@ -40,7 +43,7 @@ VOZ CONFIGURADA:
 
 RECURSOS:
   • Script: ~/.local/bin/talk2ai-daemon
-  • Config: ~/.talk2ai/
+  • Config: $TALK2AI_DIR/
   • Logs: journalctl --user -u talk2ai.service -f
 EOF
 }

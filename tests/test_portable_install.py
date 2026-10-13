@@ -75,6 +75,23 @@ class PortableInstallTest(unittest.TestCase):
         self.assertIn('[ -f "$TALK2AI_DIR/tts-voice" ] ||', installer)
         self.assertIn('[ -f "$TALK2AI_DIR/tts-speed" ] ||', installer)
 
+    def test_portable_paths_are_shared_by_runtime_and_services(self):
+        for relative in ("scripts/talk2ai-daemon", "scripts/talk2ai-handler",
+                         "scripts/talk2ai-keys", "scripts/talk2ai-tray",
+                         "scripts/talk2ai-tts"):
+            text = (REPO / relative).read_text(encoding="utf-8")
+            self.assertIn("TALK2AI_DIR", text)
+        for relative in ("config/talk2ai.service", "config/talk2ai-tts.service"):
+            text = (REPO / relative).read_text(encoding="utf-8")
+            self.assertIn("@TALK2AI_DIR@", text)
+            self.assertIn("@TALK2AI_DATA_DIR@", text)
+
+    def test_reinstall_stops_tray_before_touching_its_lock(self):
+        installer = (REPO / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("stop_tray", installer)
+        self.assertNotIn('rm -f "$TALK2AI_DIR/tray.lock" && true', installer)
+        self.assertIn('kill -TERM "$pid"', installer)
+
 
 if __name__ == "__main__":
     unittest.main()

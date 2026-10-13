@@ -64,7 +64,10 @@ El modo persiste hasta que lo cambias. Puedes alternar entre ambos en cualquier 
 La elección de voz es independiente del driver y modelo de IA. El menú del
 tray **Voz / TTS** permite seleccionar un perfil del catálogo y reproducir una
 frase fija sin consultar al LLM. Las preferencias se guardan en
-`~/.talk2ai/tts-engine`, `tts-voice` y `tts-speed`.
+`$TALK2AI_DIR/tts-engine`, `tts-voice` y `tts-speed`. En instalaciones nuevas
+`TALK2AI_DIR` usa `${XDG_STATE_HOME:-~/.local/state}/talk2ai`; si ya existe
+`~/.talk2ai`, se conserva por compatibilidad. Se puede fijar explícitamente
+con `TALK2AI_DIR=/ruta/talk2ai`.
 
 eSpeak-ng Retro (`es`, velocidad 140, tono 40) funciona sin modelos y es el
 fallback. El manifiesto permite descargar conscientemente y con SHA-256 los
@@ -77,12 +80,13 @@ talk2ai-tts list
 ```
 
 El catálogo no instala ni descarga modelos durante `install.sh`. Sus archivos
-versionados se despliegan y actualizan en `${XDG_DATA_HOME:-~/.local/share}/talk2ai/`;
-las preferencias y el estado existentes permanecen en `~/.talk2ai/`. Piper y sus
+versionados se despliegan y actualizan en `${TALK2AI_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/talk2ai}`;
+las preferencias y el estado existentes permanecen en `$TALK2AI_DIR`. Piper y sus
 voces permanecen visibles sólo como bloqueadas: no se activan ni descargan.
-El runtime Python de Kokoro se mantiene en `~/.talk2ai/tts-venv`; la instalación
+El runtime Python de Kokoro se mantiene en `$TALK2AI_DIR/tts-venv`; su instalación
 automática sigue bloqueada hasta publicar un lock transitorio por plataforma
-que esté revisado íntegramente. La velocidad se elige desde el tray y se guarda
+que incluya `misaki` y todas sus dependencias, con hashes y avisos revisados.
+La velocidad se elige desde el tray y se guarda
 por usuario; eSpeak usa palabras por minuto y Kokoro multiplicadores, sin
 mezclar unidades.
 

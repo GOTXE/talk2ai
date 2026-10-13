@@ -6,7 +6,8 @@
 TRANSCRIPTION="$1"
 [ -z "${TRANSCRIPTION// }" ] && exit 0
 
-TALK2AI_DIR="$HOME/.talk2ai"
+_legacy_talk2ai_dir="$HOME/.talk2ai"
+TALK2AI_DIR="${TALK2AI_DIR:-$(if [ -d "$_legacy_talk2ai_dir" ]; then printf '%s' "$_legacy_talk2ai_dir"; else printf '%s/talk2ai' "${XDG_STATE_HOME:-$HOME/.local/state}"; fi)}"
 MODE_FILE="$TALK2AI_DIR/mode"
 
 MODE=$(cat "$MODE_FILE" 2>/dev/null || echo "ai")

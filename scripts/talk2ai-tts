@@ -29,7 +29,9 @@ MAX_TEXT = 12000
 # so a peer cannot make the broker retain an unbounded partial message.
 MAX_MESSAGE = MAX_TEXT + 2048
 TEST_PHRASE = "Hola. Esta es una prueba de voz de talk2ai."
-ROOT = Path(os.environ.get("TALK2AI_DIR", Path.home() / ".talk2ai"))
+_legacy_root = Path.home() / ".talk2ai"
+_xdg_state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "talk2ai"
+ROOT = Path(os.environ.get("TALK2AI_DIR") or (_legacy_root if _legacy_root.exists() else _xdg_state))
 _xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
 # A user service normally supplies XDG_RUNTIME_DIR.  A private state fallback
 # keeps command-line use portable on systems that do not.
@@ -179,29 +181,49 @@ def engine_speed(profile: dict, value: str) -> int | float:
 
 class Broker:
     def __init__(self) -> None:
-        self.requests: queue.Queue[tuple[str, dict]] = queue.Queue()
+        self.requests: queue.Queue[tuple[str, dict, int]] = queue.Queue()
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.active: subprocess.Popen | None = None
         self.kokoro: subprocess.Popen | None = None
-        self.generation = 0
-        atomic_write(ROOT / "tts-cancel-generation", "0\n")
+        try:
+            self.generation = int((ROOT / "tts-cancel-generation").read_text().strip())
+        except (OSError, ValueError):
+            self.generation = 0
+        atomic_write(ROOT / "tts-cancel-generation", f"{self.generation}\n")
         self.thread = threading.Thread(target=self.playback, daemon=True)
 
     def start(self) -> None:
-        self.thread.start()
-        if SOCKET.exists():
-            SOCKET.unlink()
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(SOCKET))
+        try:
+            if SOCKET.exists():
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                    probe.settimeout(0.2)
+                    try:
+                        probe.connect(str(SOCKET))
+                    except (ConnectionRefusedError, FileNotFoundError):
+                        SOCKET.unlink()
+                    except OSError as exc:
+                        raise RuntimeError("ya existe una instancia activa del broker TTS") from exc
+                    else:
+                        raise RuntimeError("ya existe una instancia activa del broker TTS")
+            server.bind(str(SOCKET))
+        except Exception:
+            server.close()
+            raise
         os.chmod(SOCKET, 0o600)
         server.listen(16)
-        while not self.stop.is_set():
-            try:
-                connection, _ = server.accept()
-            except OSError:
-                break
-            threading.Thread(target=self.handle, args=(connection,), daemon=True).start()
+        self.thread.start()
+        try:
+            while not self.stop.is_set():
+                try:
+                    connection, _ = server.accept()
+                except OSError:
+                    break
+                threading.Thread(target=self.handle, args=(connection,), daemon=True).start()
+        finally:
+            server.close()
+            SOCKET.unlink(missing_ok=True)
 
     def handle(self, connection: socket.socket) -> None:
         with connection:
@@ -222,13 +244,11 @@ class Broker:
                 command = request.get("command")
                 if command == "speak":
                     supplied_generation = request.get("generation")
-                    if supplied_generation is not None and supplied_generation != self.generation:
-                        raise RuntimeError("turno TTS cancelado")
                     requested = request.get("profile")
                     profile = profile_by_id(requested) if requested else current_profile()
                     if not profile:
                         raise ValueError("perfil TTS desconocido")
-                    self.requests.put((safe_text(request.get("text", "")), profile))
+                    self.enqueue(request.get("text", ""), profile, supplied_generation)
                     result = {"ok": True, "status": "queued"}
                 elif command == "cancel":
                     self.cancel()
@@ -258,10 +278,20 @@ class Broker:
                     threading.Thread(target=self._kill_if_needed, args=(process,), daemon=True).start()
             self.active = None
             self.kokoro = None
+            # Persist while holding the same lock used by enqueue.  A daemon
+            # cannot observe a new epoch before it is safe to submit it.
+            atomic_write(ROOT / "tts-cancel-generation", str(self.generation) + "\n")
         atomic_write(ROOT / "tts-state", "cancelled\n")
-        # The daemon snapshots this monotonic token before starting a streamed
-        # answer.  It then cannot enqueue late fragments after Ctrl+Alt+Q.
-        atomic_write(ROOT / "tts-cancel-generation", str(self.generation) + "\n")
+
+    def enqueue(self, text: str, profile: dict, supplied_generation: int | None = None) -> int:
+        """Validate, stamp and enqueue one request as one critical section."""
+        text = safe_text(text)
+        with self.lock:
+            generation = self.generation
+            if supplied_generation is not None and supplied_generation != generation:
+                raise RuntimeError("turno TTS cancelado")
+            self.requests.put((text, profile, generation))
+            return generation
 
     @staticmethod
     def _kill_if_needed(process: subprocess.Popen) -> None:
@@ -276,10 +306,11 @@ class Broker:
 
     def playback(self) -> None:
         while not self.stop.is_set():
-            text, profile = self.requests.get()
+            text, profile, generation = self.requests.get()
             if not text:
                 continue
-            generation = self.generation
+            if not self.is_current(generation):
+                continue
             atomic_write(ROOT / "tts-state", "speaking\n")
             try:
                 self.speak(text, profile, generation)
@@ -296,10 +327,16 @@ class Broker:
             if generation == self.generation:
                 atomic_write(ROOT / "tts-state", "idle\n")
 
-    def invoke(self, command: list[str]) -> None:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.DEVNULL, start_new_session=True)
+    def is_current(self, generation: int) -> bool:
         with self.lock:
+            return generation == self.generation
+
+    def invoke(self, command: list[str], generation: int) -> None:
+        with self.lock:
+            if generation != self.generation:
+                raise RuntimeError("reproducción cancelada")
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, start_new_session=True)
             self.active = process
         result = process.wait()
         with self.lock:
@@ -309,6 +346,8 @@ class Broker:
             raise RuntimeError(f"reproductor terminó con código {result}")
 
     def speak(self, text: str, profile: dict, generation: int) -> None:
+        if not self.is_current(generation):
+            raise RuntimeError("síntesis cancelada")
         available, reason = availability(profile)
         if not available:
             raise RuntimeError(reason)
@@ -319,14 +358,14 @@ class Broker:
             # streamed AI text become arbitrary SSML.
             safe_ssml = html.escape(text).replace(
                 "Stephen Hawking", '<lang xml:lang="en">Stephen Hawking</lang>')
-            self.invoke(["espeak-ng", "-v", "es", "-m", "-s", str(speed), "-p", "40", safe_ssml])
+            self.invoke(["espeak-ng", "-v", "es", "-m", "-s", str(speed), "-p", "40", safe_ssml], generation)
             return
         wav = self.kokoro_wav(text, profile, generation)
         try:
             player = shutil.which("aplay")
             if not player:
                 raise RuntimeError("aplay no está instalado")
-            self.invoke([player, "-q", wav])
+            self.invoke([player, "-q", wav], generation)
         finally:
             Path(wav).unlink(missing_ok=True)
 
@@ -345,12 +384,16 @@ class Broker:
                                            "speed": engine_speed(profile, read_pref("tts-speed", "1.0"))}) + "\n")
             worker.stdin.flush()
         line = worker.stdout.readline()
-        if generation != self.generation:
+        if not self.is_current(generation):
             raise RuntimeError("síntesis cancelada")
         reply = json.loads(line or "{}")
         if not reply.get("ok"):
             raise RuntimeError(reply.get("error", "Kokoro no respondió"))
-        return reply["path"]
+        path = reply["path"]
+        if not self.is_current(generation):
+            Path(path).unlink(missing_ok=True)
+            raise RuntimeError("síntesis cancelada")
+        return path
 
 
 def send(request: dict) -> dict:

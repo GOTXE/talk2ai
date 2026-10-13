@@ -4,9 +4,8 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Keep the historic state location for compatibility with existing installs.
-# Versioned, distributable data lives separately so upgrades cannot leave an
-# old catalog behind or make an installed script depend on this checkout.
+# Keep the historic state location for compatibility with existing installs;
+# new installs use XDG state unless TALK2AI_DIR is explicitly provided.
 # There is no XDG base-directory standard for executable user scripts; use the
 # conventional location also referenced by the user systemd units.
 BIN_DIR="$HOME/.local/bin"
@@ -14,7 +13,8 @@ XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 SYSTEMD_DIR="$XDG_CONFIG_HOME/systemd/user"
 AUTOSTART_DIR="$XDG_CONFIG_HOME/autostart"
-TALK2AI_DIR="${TALK2AI_DIR:-$HOME/.talk2ai}"
+LEGACY_TALK2AI_DIR="$HOME/.talk2ai"
+TALK2AI_DIR="${TALK2AI_DIR:-$(if [[ -d "$LEGACY_TALK2AI_DIR" ]]; then printf '%s' "$LEGACY_TALK2AI_DIR"; else printf '%s/talk2ai' "${XDG_STATE_HOME:-$HOME/.local/state}"; fi)}"
 TTS_DATA_DIR="${TALK2AI_DATA_DIR:-$XDG_DATA_HOME/talk2ai}"
 
 GREEN='\033[0;32m'
@@ -47,7 +47,46 @@ step "0/7  Detener procesos existentes"
 
 systemctl --user stop talk2ai.service 2>/dev/null && ok "Servicio detenido" || true
 systemctl --user stop talk2ai-tts.service 2>/dev/null && ok "Broker TTS detenido" || true
-rm -f "$TALK2AI_DIR/tray.lock" && true
+
+stop_tray() {
+    local lock="$TALK2AI_DIR/tray.lock" pid cmd
+    [[ -f "$lock" ]] || return 0
+    pid=$(head -n 1 "$lock" 2>/dev/null || true)
+    # Older releases left an empty lock. Discover only the exact installed
+    # executable and verify its /proc command line; never use pkill -f.
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        while read -r candidate; do
+            [[ -r "/proc/$candidate/cmdline" ]] || continue
+            cmd=$(tr '\0' ' ' < "/proc/$candidate/cmdline")
+            if [[ "$cmd" == *"$BIN_DIR/talk2ai-tray"* ]]; then
+                pid="$candidate"
+                break
+            fi
+        done < <(pgrep -f -- "$BIN_DIR/talk2ai-tray" 2>/dev/null || true)
+    fi
+    if [[ "$pid" =~ ^[0-9]+$ ]] && [[ -r "/proc/$pid/cmdline" ]]; then
+        cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline")
+        if [[ "$cmd" == *"$BIN_DIR/talk2ai-tray"* ]]; then
+            kill -TERM "$pid" 2>/dev/null || true
+            for _ in {1..30}; do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+                warn "El tray no terminó ordenadamente (PID $pid); no se elimina su lock"
+                return 1
+            fi
+            ok "Tray detenido (PID $pid)"
+        fi
+    fi
+    if [[ -n "$pid" ]] && [[ -e "/proc/$pid" ]]; then
+        warn "Lock del tray pertenece a un proceso no verificable; no se elimina"
+        return 1
+    fi
+    rm -f "$lock"
+}
+
+stop_tray
 
 # ── Detectar gestor de paquetes ───────────────────────────────────────────────
 
@@ -218,17 +257,36 @@ mkdir -p "$SYSTEMD_DIR" "$AUTOSTART_DIR"
 
 cp "$REPO_DIR/config/talk2ai.service"      "$SYSTEMD_DIR/talk2ai.service"
 cp "$REPO_DIR/config/talk2ai-tts.service"  "$SYSTEMD_DIR/talk2ai-tts.service"
-# Desktop Entry does not support systemd's %h specifier.  Materialize the
-# current user's executable path at install time, with desktop-entry escaping
-# for the unusual but valid case of spaces in HOME.
-python3 - "$REPO_DIR/config/talk2ai-tray.desktop" "$AUTOSTART_DIR/talk2ai-tray.desktop" "$BIN_DIR/talk2ai-tray" <<'PYEOF'
+# User services do not necessarily inherit variables from the installer shell.
+# Materialize the selected portable paths in the units on every upgrade.
+python3 - "$SYSTEMD_DIR/talk2ai.service" "$SYSTEMD_DIR/talk2ai-tts.service" "$TALK2AI_DIR" "$TTS_DATA_DIR" <<'PYEOF'
 from pathlib import Path
 import sys
 
-template, destination, executable = map(Path, sys.argv[1:])
+service_paths = list(map(Path, sys.argv[1:3]))
+state, data = sys.argv[3:]
+def quote(value):
+    return value.replace('\\', '\\\\').replace('"', '\\"')
+for path in service_paths:
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("Environment=TALK2AI_DIR=@TALK2AI_DIR@", f'Environment="TALK2AI_DIR={quote(state)}"')
+    text = text.replace("Environment=TALK2AI_DATA_DIR=@TALK2AI_DATA_DIR@", f'Environment="TALK2AI_DATA_DIR={quote(data)}"')
+    path.write_text(text, encoding="utf-8")
+PYEOF
+# Desktop Entry does not support systemd's %h specifier.  Materialize the
+# current user's executable path at install time, with desktop-entry escaping
+# for the unusual but valid case of spaces in HOME.
+python3 - "$REPO_DIR/config/talk2ai-tray.desktop" "$AUTOSTART_DIR/talk2ai-tray.desktop" "$BIN_DIR/talk2ai-tray" "$TALK2AI_DIR" "$TTS_DATA_DIR" <<'PYEOF'
+from pathlib import Path
+import sys
+
+template, destination, executable = map(Path, sys.argv[1:4])
+state, data = sys.argv[4:]
 escaped = str(executable).replace("\\", "\\\\").replace('"', '\\"')
 entry = template.read_text(encoding="utf-8").replace(
-    "Exec=talk2ai-tray", f'Exec="{escaped}"', 1
+    'Exec=env TALK2AI_DIR="@TALK2AI_DIR@" TALK2AI_DATA_DIR="@TALK2AI_DATA_DIR@" talk2ai-tray',
+    f'Exec=env TALK2AI_DIR="{state.replace(chr(34), chr(92) + chr(34))}" '
+    f'TALK2AI_DATA_DIR="{data.replace(chr(34), chr(92) + chr(34))}" "{escaped}"', 1
 )
 destination.write_text(entry, encoding="utf-8")
 PYEOF
@@ -238,6 +296,9 @@ ok "talk2ai-tray.desktop instalado (autostart)"
 # Atajos X11
 if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
     cp "$REPO_DIR/config/xbindkeysrc" "$HOME/.xbindkeysrc"
+    TALK2AI_DIR_ESCAPED=${TALK2AI_DIR//\\/\\\\}
+    TALK2AI_DIR_ESCAPED=${TALK2AI_DIR_ESCAPED//|/\\|}
+    sed -i "s|@TALK2AI_DIR@|$TALK2AI_DIR_ESCAPED|g" "$HOME/.xbindkeysrc"
     ok "~/.xbindkeysrc instalado (atajos X11)"
 fi
 
@@ -328,11 +389,11 @@ for service in talk2ai-tts.service talk2ai.service; do
 done
 
 # Lanzar tray
-if [[ -x "$BIN_DIR/talk2ai-tray" ]]; then
+if [[ -x "$BIN_DIR/talk2ai-tray" ]] && ! pgrep -f "$BIN_DIR/talk2ai-tray" >/dev/null 2>&1; then
     nohup "$BIN_DIR/talk2ai-tray" &>/dev/null &
     disown
     sleep 1
-    if pgrep -f talk2ai-tray &>/dev/null; then
+    if pgrep -f "$BIN_DIR/talk2ai-tray" &>/dev/null; then
         ok "Tray lanzado"
     else
         warn "Tray no pudo arrancar — prueba: talk2ai-tray"

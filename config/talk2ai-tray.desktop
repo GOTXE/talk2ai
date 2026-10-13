@@ -2,7 +2,7 @@
 Type=Application
 Name=talk2ai Tray
 Comment=Tray icon para talk2ai
-Exec=talk2ai-tray
+Exec=env TALK2AI_DIR="@TALK2AI_DIR@" TALK2AI_DATA_DIR="@TALK2AI_DATA_DIR@" talk2ai-tray
 Icon=audio-input-microphone
 Hidden=false
 NoDisplay=false

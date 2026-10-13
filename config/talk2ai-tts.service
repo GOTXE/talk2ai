@@ -5,6 +5,8 @@ PartOf=talk2ai.service
 
 [Service]
 Type=simple
+Environment=TALK2AI_DIR=@TALK2AI_DIR@
+Environment=TALK2AI_DATA_DIR=@TALK2AI_DATA_DIR@
 ExecStart=%h/.local/bin/talk2ai-tts serve
 Restart=on-failure
 RestartSec=2

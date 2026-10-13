@@ -22,8 +22,16 @@ driver IA (stdout) -> daemon (segmenta, retira [ENLACE]) -> talk2ai-tts speak
 Ctrl+Alt+Q / tray -> talk2ai-tts cancel -> cola + grupo de proceso
 ```
 
+Cada petición conserva la generación observada al entrar en la cola. El lock
+del broker cubre la validación, el encolado y `cancel()`, y también cubre la
+creación y registro del proceso; por eso una síntesis antigua no puede iniciar
+reproducción después de una cancelación ni cambiar el estado de una generación
+nueva. El broker rechaza sockets vivos, elimina sólo sockets obsoletos y
+restaura la generación persistida al reiniciar.
+
 Los ficheros `tts-engine`, `tts-voice`, `tts-speed`, `tts-state` y `tts-error`
-viven en `~/.talk2ai/` y no modifican `driver` ni `model`. Un perfil inválido,
+viven en `TALK2AI_DIR` (por defecto XDG state en instalaciones nuevas, o
+`~/.talk2ai/` si existe una instalación anterior) y no modifican `driver` ni `model`. Un perfil inválido,
 un modelo ausente o un fallo neuronal vuelve a eSpeak-ng Retro. El catálogo no
 acepta ejecutables, rutas o voces proporcionadas por el texto de la IA.
 

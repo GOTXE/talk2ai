@@ -6,6 +6,8 @@ Requires=talk2ai-tts.service
 
 [Service]
 Type=simple
+Environment=TALK2AI_DIR=@TALK2AI_DIR@
+Environment=TALK2AI_DATA_DIR=@TALK2AI_DATA_DIR@
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/talk2ai-daemon
 ExecStop=/bin/kill -TERM $MAINPID

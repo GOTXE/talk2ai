@@ -6,7 +6,10 @@ import json
 import os
 import urllib.request
 
-_host_file = os.path.expanduser('~/.talk2ai/ollama-host')
+_legacy_dir = os.path.expanduser('~/.talk2ai')
+_state_dir = os.path.join(os.environ.get('XDG_STATE_HOME', os.path.expanduser('~/.local/state')), 'talk2ai')
+_talk2ai_dir = os.environ.get('TALK2AI_DIR') or (_legacy_dir if os.path.isdir(_legacy_dir) else _state_dir)
+_host_file = os.path.join(_talk2ai_dir, 'ollama-host')
 host = (open(_host_file).read().strip() if os.path.isfile(_host_file)
         else os.environ.get('TALK2AI_OLLAMA_HOST', 'http://127.0.0.1:11434'))
 model = os.environ.get('TALK2AI_MODEL', 'qwen3.5:2b')

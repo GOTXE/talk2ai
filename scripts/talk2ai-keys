@@ -5,6 +5,7 @@ Sin popups, sin D-Bus complejo. Funciona igual en X11 y Wayland.
 """
 
 import asyncio
+import os
 import subprocess
 import sys
 import time
@@ -13,7 +14,10 @@ from pathlib import Path
 import evdev
 from evdev import ecodes, InputDevice
 
-TALK2AI_DIR = Path.home() / ".talk2ai"
+_legacy_dir = Path.home() / ".talk2ai"
+TALK2AI_DIR = Path(os.environ.get("TALK2AI_DIR") or
+                     (_legacy_dir if _legacy_dir.exists() else
+                      Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "talk2ai"))
 MODE_FILE = TALK2AI_DIR / "mode"
 
 MODIFIER_KEYS = {

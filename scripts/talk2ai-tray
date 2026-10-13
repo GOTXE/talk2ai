@@ -19,8 +19,11 @@ from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QBrush,
 from PyQt6.QtCore import QTimer, Qt, QRectF, pyqtSignal, QObject, QThread, QFileSystemWatcher, QByteArray
 from PyQt6.QtSvg import QSvgRenderer
 
-HANDY_DB           = Path.home() / ".local/share/com.pais.handy/history.db"
-TALK2AI_DIR        = Path.home() / ".talk2ai"
+HANDY_DB           = Path(os.environ.get("HANDY_DB", str(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "com.pais.handy" / "history.db")))
+_legacy_dir       = Path.home() / ".talk2ai"
+TALK2AI_DIR        = Path(os.environ.get("TALK2AI_DIR") or
+                           (_legacy_dir if _legacy_dir.exists() else
+                            Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "talk2ai"))
 MODE_FILE          = TALK2AI_DIR / "mode"
 DRIVER_FILE        = TALK2AI_DIR / "driver"
 STATE_FILE         = TALK2AI_DIR / "ai-state"
@@ -880,6 +883,11 @@ if __name__ == "__main__":
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         sys.exit(0)
+
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(f"{os.getpid()}\n")
+    lock_file.flush()
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

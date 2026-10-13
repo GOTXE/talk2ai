@@ -29,6 +29,13 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 - Cancelación por generación: los fragmentos tardíos de una respuesta cancelada
   son rechazados por el broker; el tray permite guardar velocidades válidas por
   motor.
+- La cola TTS estampa cada fragmento con una generación inmutable y sincroniza
+  encolado, cancelación y registro de procesos; el socket no reemplaza una
+  instancia activa y los reinicios conservan la generación persistida.
+- El instalador detiene el tray verificando su PID bajo `flock`, conserva
+  preferencias y materializa `TALK2AI_DIR`/`TALK2AI_DATA_DIR` en systemd,
+  autostart y atajos X11; las rutas nuevas siguen XDG y las instalaciones
+  heredadas en `~/.talk2ai` siguen siendo compatibles.
 
 ### Seguridad
 - Piper queda bloqueado mientras sus pesos no superen la revisión por

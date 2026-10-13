@@ -1,6 +1,9 @@
 import json
 import os
 import http.server
+import importlib.util
+import importlib.machinery
+import queue
 import socket
 import stat
 import subprocess
@@ -8,11 +11,21 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
 TTS = REPO / "scripts" / "talk2ai-tts"
+
+
+def load_broker_module():
+    loader = importlib.machinery.SourceFileLoader("talk2ai_tts_test_module", str(TTS))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 class TtsBrokerTest(unittest.TestCase):
@@ -182,6 +195,72 @@ class TtsBrokerTest(unittest.TestCase):
         time.sleep(0.1)
         self.assertFalse(marker.exists())
 
+    def test_cancel_and_enqueue_are_atomic_and_never_leave_old_generation(self):
+        module = load_broker_module()
+        with mock.patch.object(module, "ROOT", self.state), mock.patch.object(module, "atomic_write"):
+            broker = module.Broker()
+            profile = {"engine": "espeak-ng", "voice": "es"}
+            barrier = threading.Barrier(3)
+
+            def enqueue():
+                barrier.wait()
+                try:
+                    broker.enqueue("fragmento", profile)
+                except RuntimeError:
+                    pass
+
+            def cancel():
+                barrier.wait()
+                broker.cancel()
+
+            producer = threading.Thread(target=enqueue)
+            canceller = threading.Thread(target=cancel)
+            producer.start()
+            canceller.start()
+            barrier.wait()
+            producer.join(timeout=2)
+            canceller.join(timeout=2)
+            self.assertFalse(producer.is_alive())
+            self.assertFalse(canceller.is_alive())
+            queued = []
+            while True:
+                try:
+                    queued.append(broker.requests.get_nowait())
+                except queue.Empty:
+                    break
+            self.assertTrue(all(item[2] == broker.generation for item in queued))
+
+    def test_cancel_between_extraction_and_playback_rejects_stale_generation(self):
+        module = load_broker_module()
+        with mock.patch.object(module, "ROOT", self.state), mock.patch.object(module, "atomic_write"):
+            broker = module.Broker()
+            profile = {"engine": "espeak-ng", "voice": "es"}
+            generation = broker.enqueue("no debe reproducirse", profile)
+            broker.cancel()
+            with mock.patch.object(module, "availability", return_value=(True, "")), \
+                    mock.patch.object(broker, "invoke") as invoke:
+                with self.assertRaisesRegex(RuntimeError, "cancelada"):
+                    broker.speak("no debe reproducirse", profile, generation)
+                invoke.assert_not_called()
+
+    def test_second_broker_cannot_take_an_active_socket(self):
+        second = subprocess.run([str(TTS), "serve"], env=self.env, text=True,
+                                capture_output=True, timeout=4)
+        self.assertNotEqual(second.returncode, 0)
+        self.assertIn("instancia activa", second.stderr)
+
+    def test_broker_restart_preserves_cancel_generation(self):
+        self.assertEqual(self.run_tts("cancel").returncode, 0)
+        generation = int((self.state / "tts-cancel-generation").read_text())
+        self.server.terminate()
+        self.server.wait(timeout=3)
+        self.server = subprocess.Popen([str(TTS), "serve"], env=self.env,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        late = self.run_tts("speak", "--generation", str(generation - 1),
+                            input_text="respuesta antigua")
+        self.assertNotEqual(late.returncode, 0)
+        self.assertIn("cancelado", late.stderr)
+
 
 class DistributedFilesTest(unittest.TestCase):
     def test_no_developer_paths_or_legacy_state_paths_are_distributed(self):
@@ -203,6 +282,12 @@ class DistributedFilesTest(unittest.TestCase):
         self.assertIn('EspeakG2P(language="es")', worker)
         self.assertIn("is_phonemes=True", worker)
         self.assertNotIn('lang="e"', worker)
+
+    def test_daemon_never_uses_unbound_tail_or_error_fallback(self):
+        daemon = (REPO / "scripts" / "talk2ai-daemon").read_text(encoding="utf-8")
+        self.assertIn('_speak "$_spoken_tail" "$_turn_generation"', daemon)
+        self.assertIn('_speak "$_rand_msg" "$_turn_generation"', daemon)
+        self.assertNotIn('_speak "$_spoken_tail"\n', daemon)
 
 
 if __name__ == "__main__":
