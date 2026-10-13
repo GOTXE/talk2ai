@@ -34,16 +34,23 @@ exec {_driver_fd}<"$fifo"
 rm -f "$fifo"
 response=""
 started=$(date +%s%3N)
+exit_deadline=0
 while :; do
     _read_driver_char
     status=$?
-    [ -n "$_driver_char" ] && [ "$_driver_char" != $'\n' ] && response+="$_driver_char"
+    [ -n "$_driver_char" ] && response+="$_driver_char"
     if [ "$status" -eq 2 ]; then
         if [ -n "${CANCEL_AFTER:-}" ] && [ $(( $(date +%s%3N) - started )) -ge "$CANCEL_AFTER" ]; then
             _stop_turn_driver "$pid_file" "$monitor"
             break
         fi
-        kill -0 "$monitor" 2>/dev/null || break
+        if ! kill -0 "$monitor" 2>/dev/null; then
+            [ "$exit_deadline" -ne 0 ] || exit_deadline=$(( $(date +%s%3N) + 1000 ))
+            if [ $(date +%s%3N) -ge "$exit_deadline" ]; then
+                _stop_turn_driver "$pid_file" "$monitor"
+                break
+            fi
+        fi
     elif [ "$status" -eq 1 ]; then
         break
     elif [ "$status" -ne 0 ]; then
@@ -65,11 +72,13 @@ printf '%s' "$response"
 
     def test_incremental_reader_preserves_pauses_tokens_unicode_and_final_line(self):
         cases = [
-            ("printf 'Hola '; sleep 0.4; printf 'mundo\\n'", "Hola mundo"),
-            ("printf 'H'; sleep 0.1; printf 'o'; sleep 0.5; printf 'la mundo\\n'", "Hola mundo"),
+            ("printf 'Hola '; sleep 0.4; printf 'mundo\\n'", "Hola mundo\n"),
+            ("printf 'H'; sleep 0.1; printf 'o'; sleep 0.5; printf 'la mundo\\n'", "Hola mundo\n"),
             ("printf 'Respuesta sin salto final'", "Respuesta sin salto final"),
-            ("printf '¿Qué tal, ñandú? ¡Muy bien!\\n'", "¿Qué tal, ñandú? ¡Muy bien!"),
-            ("printf 'fragmento '; sleep 0.2; printf 'largo '; sleep 0.4; printf 'con pausas '; sleep 0.1; printf 'irregulares\\n'", "fragmento largo con pausas irregulares"),
+            ("printf '¿Qué tal, ñandú? ¡Muy bien!\\n'", "¿Qué tal, ñandú? ¡Muy bien!\n"),
+            ("printf 'fragmento '; sleep 0.2; printf 'largo '; sleep 0.4; printf 'con pausas '; sleep 0.1; printf 'irregulares\\n'", "fragmento largo con pausas irregulares\n"),
+            ("printf 'Hola\\nMundo\\n'", "Hola\nMundo\n"),
+            ("python3 -c 'print(\"x\" * 12000, end=\"\")'", "x" * 12000),
         ]
         for emitted, expected in cases:
             with self.subTest(expected=expected):

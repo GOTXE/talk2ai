@@ -162,21 +162,42 @@ _stop_turn_driver() {
     wait "$monitor_pid" 2>/dev/null || true
 }
 
-# Read one character at a time so a driver may stream tokens without newline
-# delimiters.  Bash read returns >128 on timeout and 1 on EOF; in both cases
-# it may still have placed a partial character in the variable.
+# Read characters incrementally while buffering each kernel read. Bash read
+# returns >128 on timeout and 1 on EOF; both can carry partial data.
 _read_driver_char() {
     _driver_char=""
-    IFS= read -r -t 0.2 -N 1 _driver_char <&"$_driver_fd"
-    local status=$?
-    if [ "$status" -eq 0 ]; then
+    if [ -n "${_driver_pending:-}" ]; then
+        _driver_char="${_driver_pending:0:1}"
+        _driver_pending="${_driver_pending:1}"
         return 0
+    fi
+    if [ "${_driver_pending_eof:-false}" = true ]; then
+        return 1
+    fi
+    local chunk
+    chunk=""
+    IFS= read -r -t 0.2 -N 1024 chunk <&"$_driver_fd"
+    status=$?
+    _driver_pending="$chunk"
+    [ "$status" -eq 1 ] && _driver_pending_eof=true
+    if [ -n "$_driver_pending" ]; then
+        _driver_char="${_driver_pending:0:1}"
+        _driver_pending="${_driver_pending:1}"
+        return 0
+    elif [ "$status" -eq 0 ]; then
+        return 2
     elif [ "$status" -gt 128 ]; then
-        return 2  # timeout; _driver_char is still valid if Bash returned one
+        return 2  # timeout with no buffered character
     elif [ "$status" -eq 1 ]; then
-        return 1  # EOF; _driver_char is still valid if this was a final byte
+        return 1  # EOF with no buffered character
     fi
     return 3      # an actual read error
+}
+
+_normalize_tts_text() {
+    # The original response is kept separately; this is only for speech.
+    printf '%s' "$1" | tr '\n' ' ' |
+        sed 's/\[ENLACE:[^]]*\]//g; s/[[:space:]][[:space:]]*/ /g; s/^ //;s/ $//'
 }
 
 _cleanup_turn_driver() {
@@ -283,10 +304,14 @@ main() {
         echo "processing" > "$STATE_FILE"
         buffer=""
         response=""
+        _driver_pending=""
+        _driver_pending_eof=false
         _phrases=()
         _first_speak=true
         _turn_generation=$(_cancel_generation)
         _turn_cancelled=false
+        _driver_exit_seen=false
+        _driver_exit_deadline=0
 
         mkfifo "$_driver_fifo"
         _run_driver "$TRANSCRIPTION" >"$_driver_fifo" &
@@ -302,17 +327,23 @@ main() {
             _read_driver_char
             _read_status=$?
             if [ -n "$_driver_char" ]; then
-                # Newlines delimit driver records, but are not part of the
-                # answer.  Every other character is retained byte-for-byte
-                # in arrival order; in particular, do not invent spaces.
-                if [ "$_driver_char" != $'\n' ]; then
-                    buffer+="$_driver_char"
-                    response+="$_driver_char"
-                fi
+                # Preserve the original response exactly. Newlines are
+                # normalized only when a fragment is sent to TTS.
+                buffer+="$_driver_char"
+                response+="$_driver_char"
             fi
             if [ "$_read_status" -eq 2 ]; then
+                # Supervisor exit is not EOF: descendants may still hold the
+                # FIFO open and bytes may remain buffered. Bound that case.
                 if ! kill -0 "$_driver_monitor_pid" 2>/dev/null; then
-                    break
+                    if [ "$_driver_exit_seen" = false ]; then
+                        _driver_exit_seen=true
+                        _driver_exit_deadline=$(( $(date +%s%3N) + 1000 ))
+                    elif [ "$(date +%s%3N)" -ge "$_driver_exit_deadline" ]; then
+                        _turn_cancelled=true
+                        _stop_turn_driver "$_driver_pid_file" "$_driver_monitor_pid"
+                        break
+                    fi
                 fi
                 continue
             elif [ "$_read_status" -eq 1 ]; then
@@ -327,7 +358,7 @@ main() {
                     _phrases+=("${buffer## }")
                 fi
                 if $_first_speak; then _first_speak=false; fi
-                _spoken_now=$(printf '%s' "${buffer## }" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+                _spoken_now=$(_normalize_tts_text "$buffer")
                 if [ -n "$_spoken_now" ] && ! _speak "$_spoken_now" "$_turn_generation"; then
                     _turn_cancelled=true
                     _stop_turn_driver "$_driver_pid_file" "$_driver_monitor_pid"
@@ -346,10 +377,9 @@ main() {
 
         if [ "$_turn_cancelled" = false ] && [ -n "${buffer## }" ] && ! _turn_cancelled "$_turn_generation"; then
             _phrases+=("${buffer## }")
-            _spoken_tail=$(printf '%s' "${buffer## }" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+            _spoken_tail=$(_normalize_tts_text "$buffer")
             [ -z "$_spoken_tail" ] || _speak "$_spoken_tail" "$_turn_generation" || _turn_cancelled=true
         fi
-        response="${response## }"
         _stderr=$(cat "$_err_tmp"); rm -f "$_err_tmp"
         _cleanup_turn_driver "$_driver_tmp_dir"
 
@@ -359,14 +389,14 @@ main() {
             [ -n "$_link" ] && _links+=("$_link")
         done < <(printf '%s' "$response" | grep -oP '(?<=\[ENLACE:\s)([^\]]+)(?=\])' 2>/dev/null || \
                  printf '%s' "$response" | grep -o '\[ENLACE:[^]]*\]' | sed 's/\[ENLACE: *//;s/\]//')
-        _response_spoken=$(printf '%s' "$response" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+        _response_spoken=$(_normalize_tts_text "$response")
 
         if [ "$_turn_cancelled" = false ] && [ -n "$response" ]; then
-            echo -e "${GREEN}✅ $response${NC}"
+            printf '%b✅ %s%b\n' "$GREEN" "$response" "$NC"
             if [ -f "$DEBUG_FILE" ]; then
                 _T_END=$(date +%s%3N)
                 {
-                    echo "$_T_END|A|$_response_spoken"
+                    echo "$_T_END|A|$response"
                     for _l in "${_links[@]}"; do
                         echo "$_T_END|L|$_l"
                     done
@@ -386,7 +416,7 @@ main() {
             # Hablar solo el texto sin URLs
             _phrases_spoken=()
             for _p in "${_phrases[@]}"; do
-                _ps=$(printf '%s' "$_p" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
+                _ps=$(_normalize_tts_text "$_p")
                 [ -n "$_ps" ] && _phrases_spoken+=("$_ps")
             done
             # Fragments were queued in FIFO order while the driver streamed;

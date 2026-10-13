@@ -342,11 +342,10 @@ class Broker:
             with self.lock:
                 if self.playing and generation == self.generation:
                     self.playing = False
+                    # Decide and publish under one lock so enqueue cannot
+                    # invalidate the state between those two operations.
                     next_state = "queued" if not self.requests.empty() else "idle"
-                else:
-                    next_state = None
-            if next_state is not None:
-                self.set_state_if_current(generation, next_state)
+                    atomic_write(ROOT / "tts-state", next_state + "\n")
 
     def set_state_if_current(self, generation: int, state: str) -> bool:
         """Publish a state only while its generation still owns the turn."""

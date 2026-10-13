@@ -292,6 +292,48 @@ class TtsBrokerTest(unittest.TestCase):
                 time.sleep(0.01)
             self.assertEqual((self.state / "tts-state").read_text(), "idle\n")
 
+    def test_enqueue_during_final_transition_cannot_publish_stale_idle(self):
+        module = load_broker_module()
+        with mock.patch.object(module, "ROOT", self.state):
+            broker = module.Broker()
+            profile = {"engine": "espeak-ng", "voice": "es"}
+            first = broker.enqueue("primera", profile)
+            original_write = module.atomic_write
+            transition = threading.Event()
+            enqueued = threading.Event()
+            writes = []
+            producer = None
+
+            def enqueue_during_transition():
+                broker.enqueue("segunda", profile, first)
+                enqueued.set()
+
+            def record_write(path, value):
+                nonlocal producer
+                if path.name == "tts-state":
+                    writes.append(value)
+                    if value == "idle\n" and not transition.is_set():
+                        transition.set()
+                        producer = threading.Thread(target=enqueue_during_transition)
+                        producer.start()
+                        time.sleep(0.05)
+                original_write(path, value)
+
+            with mock.patch.object(module, "atomic_write", side_effect=record_write):
+                broker.speak = lambda text, selected, generation: None
+                worker = threading.Thread(target=broker.playback, daemon=True)
+                worker.start()
+                self.assertTrue(transition.wait(timeout=2))
+                self.assertTrue(enqueued.wait(timeout=2))
+                producer.join(timeout=2)
+                self.assertFalse(producer.is_alive())
+                for _ in range(100):
+                    if (self.state / "tts-state").read_text() == "idle\n":
+                        break
+                    time.sleep(0.01)
+            self.assertEqual((self.state / "tts-state").read_text(), "idle\n")
+            self.assertLess(writes.index("idle\n"), writes.index("queued\n"))
+
     def test_second_broker_cannot_take_an_active_socket(self):
         second = subprocess.run([str(TTS), "serve"], env=self.env, text=True,
                                 capture_output=True, timeout=4)
