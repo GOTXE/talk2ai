@@ -149,12 +149,13 @@ fi
 
 step "3/7  Comprobar drivers de IA"
 
-if command -v gemini &>/dev/null; then
+if command -v agy &>/dev/null; then
+    ok "Antigravity AGY CLI encontrado: $(which agy)"
+elif command -v gemini &>/dev/null; then
     ok "Gemini CLI encontrado: $(which gemini)"
 else
-    warn "Gemini CLI no encontrado (driver por defecto)"
-    warn "Instálalo con:  npm install -g @google/gemini-cli"
-    warn "Luego autentícate:  gemini auth login"
+    warn "CLI de Gemini/AGY no encontrado (driver por defecto)"
+    warn "Asegúrate de tener 'agy' o 'gemini' instalado en PATH"
 fi
 
 if [[ -f "$TALK2AI_DIR/ollama-host" ]]; then

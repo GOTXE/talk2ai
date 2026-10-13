@@ -14,10 +14,10 @@ ERROR_LOG="$TALK2AI_DIR/errors.log"
 VOICE_PROMPT="$TALK2AI_DIR/voice-prompt.md"
 LAST_ID=0
 LANGUAGE="es"
-AI_MODEL="gemini-2.5-flash-lite"
+AI_MODEL="gemini-3.8-flash-low"
 
 declare -A DRIVER_MODELS=(
-    ["gemini"]="gemini-2.5-flash-lite"
+    ["gemini"]="gemini-3.8-flash-low"
     ["ollama"]="qwen3.5:2b"
 )
 
@@ -190,7 +190,6 @@ main() {
         echo -e "${YELLOW}🎤 Dijiste: $TRANSCRIPTION${NC}"
 
         _T_START=$(date +%s%3N)
-        _T_FIRST_TOKEN=0
         if [ -f "$DEBUG_FILE" ]; then
             _dbg_driver=$(cat "$DRIVER_FILE" 2>/dev/null || echo "gemini")
             _dbg_model_file="$TALK2AI_DIR/model-$_dbg_driver"
@@ -216,10 +215,6 @@ main() {
         while IFS= read -r line; do
             _line=$(printf '%s' "$line" | grep -v "Ripgrep\|Falling back\|not available" | sed 's/\*\*//g; s/\*//g; s/__//g; s/_//g; s/#//g')
             [ -z "$_line" ] && continue
-            if [ "$_T_FIRST_TOKEN" = "0" ]; then
-                _T_FIRST_TOKEN=$(date +%s%3N)
-                [ -f "$DEBUG_FILE" ] && echo "$_T_FIRST_TOKEN|STAT|⚡ Primer token: $(awk "BEGIN{printf \"%.2f\",($_T_FIRST_TOKEN-$_T_START)/1000}")s" >> "$DEBUG_LOG"
-            fi
             buffer+=" $_line"
             response+=" $_line"
             if [[ "$buffer" =~ [.!?:][[:space:]]*$ ]] || [ ${#buffer} -ge 150 ]; then
@@ -254,7 +249,6 @@ main() {
                     for _l in "${_links[@]}"; do
                         echo "$_T_END|L|$_l"
                     done
-                    echo "$_T_END|STAT|✅ Total: $(awk "BEGIN{printf \"%.2f\",($_T_END-$_T_START)/1000}")s  ·  ${#response} chars"
                 } >> "$DEBUG_LOG"
             fi
             for _l in "${_links[@]}"; do

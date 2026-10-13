@@ -195,7 +195,7 @@ Exit:      0  →  éxito
 
 | Driver  | Fichero              | Requisito                              |
 |---------|----------------------|----------------------------------------|
-| gemini  | `config/ia/gemini`   | Gemini CLI (`npm install -g @google/gemini-cli`) |
+| gemini  | `config/ia/gemini`   | Antigravity AGY / Gemini CLI (`agy` o `gemini`) — modelo `gemini-3.8-flash-low` |
 | ollama  | `config/ia/ollama`   | Servidor Ollama accesible (local o remoto) |
 
 ---
@@ -233,7 +233,7 @@ systemd --user
 | Herramienta   | Función                                      |
 |---------------|----------------------------------------------|
 | `handy`        | STT (Whisper local), graba y transcribe — [handy.computer](https://handy.computer) |
-| driver de IA   | ejecutable en `~/.talk2ai/ia/` — Gemini CLI (por defecto) u Ollama |
+| driver de IA   | ejecutable en `~/.talk2ai/ia/` — Gemini AGY CLI (por defecto, `gemini-3.8-flash-low`) u Ollama |
 | `espeak-ng`    | TTS — síntesis de voz en español              |
 | `ydotool`      | Inyección de teclado vía uinput (Wayland)     |
 | `xdotool`      | Inyección de teclado fallback (X11)           |

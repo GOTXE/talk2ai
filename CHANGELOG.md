@@ -6,6 +6,21 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [1.5.0] — 2026-10-13
+
+### Añadido
+- **Driver Gemini actualizado a Antigravity AGY**: migra la ejecución a `agy -p` con el modelo oficial actual `gemini-3.8-flash-low`, optimizado para baja latencia en asistentes de voz y streaming en tiempo real.
+- **Retrocompatibilidad**: fallback a `gemini` CLI si `agy` no está en PATH, y remapeo transparente de modelos heredados (`gemini-2.5*` -> `gemini-3.8-flash-low`).
+- **Detección multicliente**: `install.sh` y el tray reconocen indistintamente `agy` y `gemini`.
+
+### Cambiado
+- **Modelo por defecto de Gemini**: actualizado a `gemini-3.8-flash-low` en toda la aplicación (`talk2ai-daemon`, `talk2ai-tray`, documentación y configuración).
+
+### Eliminado
+- **Métricas de tiempo en ventana y logs de debug**: eliminada la línea de tiempo de primer token (`⚡ Primer token`) y la línea de tiempo total con recuento de caracteres (`✅ Total: Xs · Y chars`) para mantener la ventana de debug limpia y centrada en la interacción conversacional.
+
+---
+
 ## [1.4.0] — 2026-06-01
 
 ### Añadido
