@@ -328,21 +328,31 @@ mkdir -p "$TALK2AI_DIR/context"
 cp "$REPO_DIR/VERSION" "$TALK2AI_DIR/version"
 ok "version → $TALK2AI_DIR/version  ($(cat "$REPO_DIR/VERSION" | tr -d '\n'))"
 
-# voice-prompt genérico + específicos por driver
-cp "$REPO_DIR/config/voice-prompt.md" "$TALK2AI_DIR/voice-prompt.md"
-ok "voice-prompt.md → $TALK2AI_DIR/voice-prompt.md"
+# Prompts are user-owned after first install.  New defaults are offered only
+# when the target does not exist; use the repository files explicitly to
+# update a customized prompt.
+install_default_prompt() {
+    local source="$1" target="$2"
+    if [[ -e "$target" ]]; then
+        ok "$target conservado"
+    else
+        install -m 0644 "$source" "$target"
+        ok "$target instalado"
+    fi
+}
+
+install_default_prompt "$REPO_DIR/config/voice-prompt.md" "$TALK2AI_DIR/voice-prompt.md"
 for vp_src in "$REPO_DIR/config/voice-prompt-"*.md; do
     [ -f "$vp_src" ] || continue
     vp_name="$(basename "$vp_src")"
-    cp "$vp_src" "$TALK2AI_DIR/$vp_name"
-    ok "$vp_name → $TALK2AI_DIR/$vp_name"
+    install_default_prompt "$vp_src" "$TALK2AI_DIR/$vp_name"
 done
 info "Edita los prompts en $TALK2AI_DIR/voice-prompt*.md para personalizar cada driver"
 
 if [[ ! -f "$TALK2AI_DIR/context/gemini.md" ]]; then
     read -r -p "  ¿Instalar contexto de personalidad por defecto? [s/N] " resp
     if [[ "${resp,,}" == "s" ]]; then
-        cp "$REPO_DIR/config/gemini-context.md" "$TALK2AI_DIR/context/gemini.md"
+        install -m 0644 "$REPO_DIR/config/gemini-context.md" "$TALK2AI_DIR/context/gemini.md"
         ok "Contexto instalado en $TALK2AI_DIR/context/gemini.md"
     else
         info "Omitido. Puedes instalarlo luego:"

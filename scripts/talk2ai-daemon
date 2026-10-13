@@ -125,7 +125,36 @@ _run_driver() {
         export TALK2AI_OLLAMA_HOST="${TALK2AI_OLLAMA_HOST:-http://127.0.0.1:11434}"
     fi
 
-    "$driver_script" "$prompt" 2>"$_err_tmp"
+    # Isolate every turn in its own process group.  The parent polls the
+    # stream, so cancellation is observed even when the driver emits nothing.
+    setsid "$driver_script" "$prompt" 2>"$_err_tmp" &
+    local driver_pid=$!
+    printf '%s\n' "$driver_pid" > "$_driver_pid_file"
+    wait "$driver_pid"
+}
+
+_stop_turn_driver() {
+    local driver_pid monitor_pid pid_file="$1"
+    monitor_pid="$2"
+    driver_pid=$(cat "$pid_file" 2>/dev/null || true)
+    if [[ "$driver_pid" =~ ^[0-9]+$ ]]; then
+        kill -TERM -- "-$driver_pid" 2>/dev/null || true
+        kill -TERM "$driver_pid" 2>/dev/null || true
+    fi
+    kill -TERM "$monitor_pid" 2>/dev/null || true
+    for _ in {1..20}; do
+        local alive=false
+        if [[ "$driver_pid" =~ ^[0-9]+$ ]] && kill -0 "$driver_pid" 2>/dev/null; then alive=true; fi
+        if kill -0 "$monitor_pid" 2>/dev/null; then alive=true; fi
+        [[ "$alive" = false ]] && break
+        sleep 0.1
+    done
+    if [[ "$driver_pid" =~ ^[0-9]+$ ]] && kill -0 "$driver_pid" 2>/dev/null; then
+        kill -KILL -- "-$driver_pid" 2>/dev/null || true
+        kill -KILL "$driver_pid" 2>/dev/null || true
+    fi
+    kill -KILL "$monitor_pid" 2>/dev/null || true
+    wait "$monitor_pid" 2>/dev/null || true
 }
 
 main() {
@@ -225,10 +254,25 @@ main() {
         _turn_generation=$(_cancel_generation)
         _turn_cancelled=false
 
-        while IFS= read -r line; do
+        _driver_fifo=$(mktemp -u)
+        _driver_pid_file=$(mktemp)
+        rm -f "$_driver_fifo"
+        mkfifo "$_driver_fifo"
+        _run_driver "$TRANSCRIPTION" >"$_driver_fifo" &
+        _driver_monitor_pid=$!
+        exec {_driver_fd}<"$_driver_fifo"
+        rm -f "$_driver_fifo"
+        while :; do
             if _turn_cancelled "$_turn_generation"; then
                 _turn_cancelled=true
+                _stop_turn_driver "$_driver_pid_file" "$_driver_monitor_pid"
                 break
+            fi
+            if ! IFS= read -r -t 0.2 line <&"$_driver_fd"; then
+                if ! kill -0 "$_driver_monitor_pid" 2>/dev/null; then
+                    break
+                fi
+                continue
             fi
             _line=$(printf '%s' "$line" | grep -v "Ripgrep\|Falling back\|not available" | sed 's/\*\*//g; s/\*//g; s/__//g; s/_//g; s/#//g')
             [ -z "$_line" ] && continue
@@ -242,11 +286,19 @@ main() {
                 _spoken_now=$(printf '%s' "${buffer## }" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
                 if [ -n "$_spoken_now" ] && ! _speak "$_spoken_now" "$_turn_generation"; then
                     _turn_cancelled=true
+                    _stop_turn_driver "$_driver_pid_file" "$_driver_monitor_pid"
                     break
                 fi
                 buffer=""
             fi
-        done < <(_run_driver "$TRANSCRIPTION")
+        done
+        exec {_driver_fd}<&-
+        if [[ "$_turn_cancelled" = true ]]; then
+            _stop_turn_driver "$_driver_pid_file" "$_driver_monitor_pid"
+        else
+            wait "$_driver_monitor_pid" 2>/dev/null || true
+        fi
+        rm -f "$_driver_pid_file"
 
         if [ "$_turn_cancelled" = false ] && [ -n "${buffer## }" ] && ! _turn_cancelled "$_turn_generation"; then
             _phrases+=("${buffer## }")
@@ -313,4 +365,6 @@ main() {
     done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

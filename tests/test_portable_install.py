@@ -74,6 +74,29 @@ class PortableInstallTest(unittest.TestCase):
         self.assertIn('[ -f "$TALK2AI_DIR/tts-engine" ] ||', installer)
         self.assertIn('[ -f "$TALK2AI_DIR/tts-voice" ] ||', installer)
         self.assertIn('[ -f "$TALK2AI_DIR/tts-speed" ] ||', installer)
+        self.assertIn('install_default_prompt', installer)
+        self.assertIn('if [[ -e "$target" ]]', installer)
+
+    def test_prompt_defaults_are_added_without_overwriting_customizations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            custom = root / "custom.md"
+            missing = root / "new.md"
+            custom.write_text("mi prompt personalizado\n", encoding="utf-8")
+            source = REPO / "config" / "voice-prompt.md"
+            helper = subprocess.check_output(
+                ["sed", "-n", "/^install_default_prompt()/,/^}/p", str(REPO / "install.sh")],
+                text=True,
+            )
+            script = f"ok() {{ :; }}\n{helper}\ninstall_default_prompt \"$SOURCE\" \"$CUSTOM\"\ninstall_default_prompt \"$SOURCE\" \"$MISSING\"\n"
+            result = subprocess.run(
+                ["bash", "-c", script],
+                env={**os.environ, "SOURCE": str(source), "CUSTOM": str(custom), "MISSING": str(missing)},
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(custom.read_text(encoding="utf-8"), "mi prompt personalizado\n")
+            self.assertEqual(missing.read_text(encoding="utf-8"), source.read_text(encoding="utf-8"))
 
     def test_portable_paths_are_shared_by_runtime_and_services(self):
         for relative in ("scripts/talk2ai-daemon", "scripts/talk2ai-handler",

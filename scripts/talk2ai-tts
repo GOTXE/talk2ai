@@ -187,9 +187,13 @@ class Broker:
         self.active: subprocess.Popen | None = None
         self.kokoro: subprocess.Popen | None = None
         try:
-            self.generation = int((ROOT / "tts-cancel-generation").read_text().strip())
+            previous_generation = int((ROOT / "tts-cancel-generation").read_text().strip())
         except (OSError, ValueError):
-            self.generation = 0
+            previous_generation = 0
+        # A broker instance is a new trust boundary.  Advance the durable
+        # epoch before accepting requests so fragments from a previous
+        # process can never be replayed after a restart.
+        self.generation = previous_generation + 1
         atomic_write(ROOT / "tts-cancel-generation", f"{self.generation}\n")
         self.thread = threading.Thread(target=self.playback, daemon=True)
 
@@ -281,7 +285,7 @@ class Broker:
             # Persist while holding the same lock used by enqueue.  A daemon
             # cannot observe a new epoch before it is safe to submit it.
             atomic_write(ROOT / "tts-cancel-generation", str(self.generation) + "\n")
-        atomic_write(ROOT / "tts-state", "cancelled\n")
+            atomic_write(ROOT / "tts-state", "cancelled\n")
 
     def enqueue(self, text: str, profile: dict, supplied_generation: int | None = None) -> int:
         """Validate, stamp and enqueue one request as one critical section."""
@@ -291,6 +295,7 @@ class Broker:
             if supplied_generation is not None and supplied_generation != generation:
                 raise RuntimeError("turno TTS cancelado")
             self.requests.put((text, profile, generation))
+            atomic_write(ROOT / "tts-state", "queued\n")
             return generation
 
     @staticmethod
@@ -309,23 +314,36 @@ class Broker:
             text, profile, generation = self.requests.get()
             if not text:
                 continue
-            if not self.is_current(generation):
+            if not self.set_state_if_current(generation, "speaking"):
                 continue
-            atomic_write(ROOT / "tts-state", "speaking\n")
             try:
                 self.speak(text, profile, generation)
             except Exception as exc:
-                atomic_write(ROOT / "tts-error", str(exc) + "\n")
+                self.write_if_current(generation, ROOT / "tts-error", str(exc) + "\n")
                 # A non-default engine must never make speech unavailable.
-                if profile["engine"] != "espeak-ng" and generation == self.generation:
+                if profile["engine"] != "espeak-ng" and self.is_current(generation):
                     try:
                         self.speak(text, profile_by_id("espeak-retro"), generation)  # type: ignore[arg-type]
-                        atomic_write(ROOT / "tts-state", "fallback: espeak-retro\n")
+                        self.set_state_if_current(generation, "fallback: espeak-retro")
                         continue
                     except Exception as fallback:
-                        atomic_write(ROOT / "tts-error", f"{exc}; fallback: {fallback}\n")
-            if generation == self.generation:
-                atomic_write(ROOT / "tts-state", "idle\n")
+                        self.write_if_current(generation, ROOT / "tts-error", f"{exc}; fallback: {fallback}\n")
+            self.set_state_if_current(generation, "idle")
+
+    def set_state_if_current(self, generation: int, state: str) -> bool:
+        """Publish a state only while its generation still owns the turn."""
+        with self.lock:
+            if generation != self.generation:
+                return False
+            atomic_write(ROOT / "tts-state", state + "\n")
+            return True
+
+    def write_if_current(self, generation: int, path: Path, value: str) -> bool:
+        with self.lock:
+            if generation != self.generation:
+                return False
+            atomic_write(path, value)
+            return True
 
     def is_current(self, generation: int) -> bool:
         with self.lock:

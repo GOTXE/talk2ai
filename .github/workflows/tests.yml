@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Bash syntax
+        run: bash -n install.sh scripts/talk2ai-daemon scripts/talk2ai-handler scripts/talk2ai-keys scripts/talk2ai-control
+      - name: Python syntax
+        run: python -m py_compile scripts/talk2ai-tts scripts/talk2ai-tray scripts/talk2ai-keys scripts/talk2ai-tts-kokoro tests/*.py
+      - name: Regression tests
+        run: python -m unittest discover -s tests -v

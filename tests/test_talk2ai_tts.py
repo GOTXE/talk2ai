@@ -243,23 +243,47 @@ class TtsBrokerTest(unittest.TestCase):
                     broker.speak("no debe reproducirse", profile, generation)
                 invoke.assert_not_called()
 
+    def test_cancel_cannot_be_overwritten_by_an_old_playback_transition(self):
+        module = load_broker_module()
+        with mock.patch.object(module, "ROOT", self.state), mock.patch.object(module, "atomic_write") as write:
+            broker = module.Broker()
+            profile = {"engine": "espeak-ng", "voice": "es"}
+            generation = broker.enqueue("fragmento", profile)
+            broker.cancel()
+            self.assertFalse(broker.set_state_if_current(generation, "speaking"))
+            states = [call.args[1] for call in write.call_args_list if call.args[0].name == "tts-state"]
+            self.assertIn("cancelled\n", states)
+            self.assertNotIn("speaking\n", states)
+
     def test_second_broker_cannot_take_an_active_socket(self):
         second = subprocess.run([str(TTS), "serve"], env=self.env, text=True,
                                 capture_output=True, timeout=4)
         self.assertNotEqual(second.returncode, 0)
         self.assertIn("instancia activa", second.stderr)
 
-    def test_broker_restart_preserves_cancel_generation(self):
-        self.assertEqual(self.run_tts("cancel").returncode, 0)
+    def test_broker_restart_invalidates_old_generation_and_accepts_new_turn(self):
         generation = int((self.state / "tts-cancel-generation").read_text())
         self.server.terminate()
         self.server.wait(timeout=3)
         self.server = subprocess.Popen([str(TTS), "serve"], env=self.env,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        late = self.run_tts("speak", "--generation", str(generation - 1),
+        for _ in range(100):
+            if int((self.state / "tts-cancel-generation").read_text()) > generation:
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("el broker no avanzó la generación al reiniciar")
+        late = self.run_tts("speak", "--generation", str(generation),
                             input_text="respuesta antigua")
         self.assertNotEqual(late.returncode, 0)
         self.assertIn("cancelado", late.stderr)
+        fresh = self.run_tts("speak", input_text="respuesta nueva")
+        self.assertEqual(fresh.returncode, 0, fresh.stderr)
+        for _ in range(100):
+            if self.log.exists() and "respuesta nueva" in self.log.read_text():
+                break
+            time.sleep(0.02)
+        self.assertIn("respuesta nueva", self.log.read_text())
 
 
 class DistributedFilesTest(unittest.TestCase):
