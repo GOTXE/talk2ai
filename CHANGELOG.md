@@ -14,10 +14,27 @@ Versionado según [SemVer](https://semver.org/lang/es/).
 - eSpeak-ng Retro como perfil por defecto/fallback; manifiesto de descarga
   explícita y verificada para Kokoro-82M v1.0.
 - Inventario de procedencia y licencias en `THIRD_PARTY_NOTICES.md`.
+- Prueba de portabilidad que ejecuta el broker instalado con un `HOME` no
+  convencional y sin acceso al checkout original, incluyendo perfiles simulados
+  `alice` y `testuser`.
+- Protocolo JSON delimitado por línea para el socket TTS, con tamaño máximo,
+  respuesta de error efectiva y permisos privados.
+
+### Cambiado
+- Los catálogos TTS versionados se actualizan en
+  `${XDG_DATA_HOME:-~/.local/share}/talk2ai/`; las preferencias existentes en
+  `~/.talk2ai/` se conservan durante la actualización.
+- Las unidades systemd, el autostart y los atajos X11 ya no contienen rutas de
+  desarrollo ni el estado heredado de Handy.
+- Cancelación por generación: los fragmentos tardíos de una respuesta cancelada
+  son rechazados por el broker; el tray permite guardar velocidades válidas por
+  motor.
 
 ### Seguridad
 - Piper queda bloqueado mientras sus pesos no superen la revisión por
   artefacto. No se descargan modelos ni runtimes neuronales automáticamente.
+- Kokoro no se declara operativo: faltan un lock transitorio auditado y pruebas
+  reales de las voces españolas, puntuación, números y reproducción.
 
 ---
 

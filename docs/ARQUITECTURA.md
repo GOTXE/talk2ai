@@ -27,10 +27,17 @@ viven en `~/.talk2ai/` y no modifican `driver` ni `model`. Un perfil inválido,
 un modelo ausente o un fallo neuronal vuelve a eSpeak-ng Retro. El catálogo no
 acepta ejecutables, rutas o voces proporcionadas por el texto de la IA.
 
-Kokoro se ejecuta, cuando está instalado, en `~/.talk2ai/tts-venv` y un worker
-persistente conserva el modelo entre frases. La cola aplica un umbral de 150
-caracteres para no enviar fragmentos diminutos. Los temporales WAV son privados
-y se eliminan tras reproducción/cancelación.
+El catálogo y el manifiesto de artefactos son datos versionados de la
+aplicación: se instalan en `${XDG_DATA_HOME:-~/.local/share}/talk2ai/` y se
+actualizan con cada instalación. Se mantienen fuera del estado personal para
+que una actualización no sobrescriba `tts-engine`, `tts-voice` ni `tts-speed`.
+
+Kokoro tiene un worker persistente que conserva el modelo entre frases y usa
+fonemización española de Misaki/eSpeak antes de la inferencia. Sin embargo, el
+perfil queda no seleccionable hasta validar de forma real el runtime, las voces
+y la reproducción. La cola aplica un umbral de 150 caracteres para no enviar
+fragmentos diminutos. Los temporales WAV son privados y se eliminan tras
+reproducción/cancelación.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗

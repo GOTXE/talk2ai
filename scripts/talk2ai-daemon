@@ -35,15 +35,29 @@ NC='\033[0m'
 
 _speak() {
     local text="$1"
+    local generation="${2:-}"
+    local -a tts_args=(speak)
+    [ -z "$generation" ] || tts_args+=(--generation "$generation")
     # The broker owns serialization, cancellation and engine fallback. Keep a
     # direct eSpeak fallback for installations upgraded before its service.
     if command -v talk2ai-tts >/dev/null 2>&1 && \
-       printf '%s' "$text" | talk2ai-tts speak >/dev/null 2>&1; then
+       printf '%s' "$text" | talk2ai-tts "${tts_args[@]}" >/dev/null 2>&1; then
         return 0
     fi
+    # A generation-bound request can fail because Ctrl+Alt+Q won the race.
+    # Never resurrect that cancelled turn through the legacy direct fallback.
+    [ -z "$generation" ] || return 1
     local ssml
     ssml=$(printf '%s' "$text" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/Stephen Hawking/<lang xml:lang="en">Stephen Hawking<\/lang>/gi')
     espeak-ng -v "$LANGUAGE" -m -s 140 -p 40 "$ssml" 2>/dev/null
+}
+
+_cancel_generation() {
+    cat "$TALK2AI_DIR/tts-cancel-generation" 2>/dev/null || printf '0\n'
+}
+
+_turn_cancelled() {
+    [ "$(_cancel_generation)" != "$1" ]
 }
 
 _init_talk2ai() {
@@ -52,24 +66,9 @@ _init_talk2ai() {
     [ -f "$MODE_FILE" ]   || echo "ai"     > "$MODE_FILE"
     [ -f "$DRIVER_FILE" ] || echo "gemini" > "$DRIVER_FILE"
 
-    local legacy_brief="$HOME/.config/handy-gemini/brief/GEMINI.md"
-    if [ -f "$legacy_brief" ] && [ ! -f "$TALK2AI_DIR/context/gemini.md" ]; then
-        cp "$legacy_brief" "$TALK2AI_DIR/context/gemini.md"
-    fi
-
-    local repo_dir="$HOME/Documentos/Prog_Local/handy-gemini-tts"
-    local repo_driver="$repo_dir/config/ia/gemini"
-    if [ -f "$repo_driver" ]; then
-        cp "$repo_driver" "$TALK2AI_DIR/ia/gemini"
-        chmod +x "$TALK2AI_DIR/ia/gemini"
-    fi
-
-    local repo_vp="$repo_dir/config/voice-prompt.md"
-    if [ ! -f "$VOICE_PROMPT" ] && [ -f "$repo_vp" ]; then
-        cp "$repo_vp" "$VOICE_PROMPT"
-    fi
-
-    echo "$AI_MODEL" > "$MODEL_FILE"
+    # The installer deploys drivers and prompts to TALK2AI_DIR.  Do not read
+    # an old checkout or another application's configuration at runtime.
+    [ -f "$MODEL_FILE" ] || echo "$AI_MODEL" > "$MODEL_FILE"
     echo "idle"          > "$STATE_FILE"
 }
 
@@ -145,7 +144,7 @@ main() {
     if [ "$SESSION_TYPE" = "wayland" ]; then
         pkill -f "python3.*talk2ai-keys" 2>/dev/null
         sleep 0.3
-        python3 ~/.local/bin/talk2ai-keys &
+        talk2ai-keys &
         echo "talk2ai-keys lanzado en Wayland"
     else
         export DISPLAY="${DISPLAY:-:0}"
@@ -173,7 +172,7 @@ main() {
         if $USE_WAYLAND && [ $((LOOP_COUNT % 10)) -eq 0 ]; then
             if ! pgrep -f "python3.*talk2ai-keys" > /dev/null 2>&1; then
                 echo "⚠ talk2ai-keys caído, relanzando..."
-                python3 ~/.local/bin/talk2ai-keys &
+                talk2ai-keys &
             fi
         fi
         LOOP_COUNT=$((LOOP_COUNT + 1))
@@ -217,8 +216,14 @@ main() {
         response=""
         _phrases=()
         _first_speak=true
+        _turn_generation=$(_cancel_generation)
+        _turn_cancelled=false
 
         while IFS= read -r line; do
+            if _turn_cancelled "$_turn_generation"; then
+                _turn_cancelled=true
+                break
+            fi
             _line=$(printf '%s' "$line" | grep -v "Ripgrep\|Falling back\|not available" | sed 's/\*\*//g; s/\*//g; s/__//g; s/_//g; s/#//g')
             [ -z "$_line" ] && continue
             buffer+=" $_line"
@@ -229,12 +234,12 @@ main() {
                 fi
                 if $_first_speak; then _first_speak=false; fi
                 _spoken_now=$(printf '%s' "${buffer## }" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
-                [ -z "$_spoken_now" ] || _speak "$_spoken_now" || break
+                [ -z "$_spoken_now" ] || _speak "$_spoken_now" "$_turn_generation" || break
                 buffer=""
             fi
         done < <(_run_driver "$TRANSCRIPTION")
 
-        if [ -n "${buffer## }" ]; then
+        if [ "$_turn_cancelled" = false ] && [ -n "${buffer## }" ] && ! _turn_cancelled "$_turn_generation"; then
             _phrases+=("${buffer## }")
             _spoken_tail=$(printf '%s' "${buffer## }" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
             [ -z "$_spoken_tail" ] || _speak "$_spoken_tail"
@@ -250,7 +255,7 @@ main() {
                  printf '%s' "$response" | grep -o '\[ENLACE:[^]]*\]' | sed 's/\[ENLACE: *//;s/\]//')
         _response_spoken=$(printf '%s' "$response" | sed 's/\[ENLACE:[^]]*\]//g' | sed 's/  */ /g;s/^ //;s/ $//')
 
-        if [ -n "$response" ]; then
+        if [ "$_turn_cancelled" = false ] && [ -n "$response" ]; then
             echo -e "${GREEN}✅ $response${NC}"
             if [ -f "$DEBUG_FILE" ]; then
                 _T_END=$(date +%s%3N)
@@ -284,7 +289,7 @@ main() {
 
         echo "idle" > "$STATE_FILE"
 
-        if [ -z "$response" ]; then
+        if [ "$_turn_cancelled" = false ] && [ -z "$response" ]; then
             _rand_msg="${ERROR_MESSAGES[$((RANDOM % ${#ERROR_MESSAGES[@]}))]}"
             echo -e "${RED}❌ Sin respuesta del driver${NC}"
             [ -n "$_stderr" ] && echo -e "${RED}   stderr: $_stderr${NC}"

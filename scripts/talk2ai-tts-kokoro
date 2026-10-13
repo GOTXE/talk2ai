@@ -24,18 +24,29 @@ def write_wav(samples, path: Path, sample_rate: int) -> None:
 
 def main() -> int:
     from kokoro_onnx import Kokoro  # Installed only in the dedicated venv.
+    from misaki.espeak import EspeakG2P
 
     root = Path(os.environ["TALK2AI_TTS_DIR"])
     model = root / "tts" / "kokoro" / "kokoro-v1.0.int8.onnx"
     voices = root / "tts" / "kokoro" / "voices-v1.0.bin"
     kokoro = Kokoro(str(model), str(voices))
+    # kokoro-onnx's direct language mode does not accept the legacy "e"
+    # shortcut for Spanish.  Its supported Spanish example uses Misaki's
+    # eSpeak G2P and passes the resulting phonemes explicitly.
+    g2p = EspeakG2P(language="es")
     for line in sys.stdin:
         try:
             request = json.loads(line)
             text = request["text"]
             voice = request["voice"]
             speed = float(request["speed"])
-            samples, sample_rate = kokoro.create(text, voice=voice, speed=speed, lang="e")
+            if voice not in kokoro.get_voices():
+                raise ValueError("voz Kokoro no presente en el paquete de voces")
+            if not 0.5 <= speed <= 2.0:
+                raise ValueError("velocidad Kokoro fuera de rango")
+            phonemes, _ = g2p(text)
+            samples, sample_rate = kokoro.create(phonemes, voice=voice, speed=speed,
+                                                  is_phonemes=True)
             fd, name = tempfile.mkstemp(prefix="kokoro-", suffix=".wav", dir=root / "tts" / "tmp")
             os.close(fd)
             write_wav(samples, Path(name), sample_rate)

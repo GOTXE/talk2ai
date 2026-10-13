@@ -97,7 +97,7 @@ El instalador realiza estos pasos:
 1. Instala dependencias del sistema que falten (`xdotool`, `ydotool`, `espeak-ng`, etc.)
 2. Configura Handy automáticamente: `paste_method=external_script`, ruta del handler, atajo interno desactivado
 3. Informa sobre los drivers disponibles (Gemini y Ollama)
-4. Copia los scripts a `~/.local/bin/` **y los drivers** a `~/.talk2ai/ia/`
+4. Copia los scripts a `~/.local/bin/` **y los drivers** a `~/.talk2ai/ia/`; actualiza los catálogos TTS versionados en `${XDG_DATA_HOME:-~/.local/share}/talk2ai/` sin modificar las preferencias de voz
 5. Instala el servicio systemd y el autostart del tray
 6. Instala `voice-prompt.md` y ofrece instalar el contexto de personalidad
 7. Verifica que todo esté correcto (scripts, drivers, servicio, tray) y muestra un resumen; escribe `~/.talk2ai/version` con la versión instalada
@@ -206,7 +206,7 @@ Causa habitual: `handy` o el driver no están en PATH. Añade en `~/.config/syst
 
 ```ini
 [Service]
-Environment=PATH=/home/TU_USUARIO/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ```
 
 ### El dictado no escribe en la ventana

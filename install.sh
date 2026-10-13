@@ -4,10 +4,18 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Keep the historic state location for compatibility with existing installs.
+# Versioned, distributable data lives separately so upgrades cannot leave an
+# old catalog behind or make an installed script depend on this checkout.
+# There is no XDG base-directory standard for executable user scripts; use the
+# conventional location also referenced by the user systemd units.
 BIN_DIR="$HOME/.local/bin"
-SYSTEMD_DIR="$HOME/.config/systemd/user"
-AUTOSTART_DIR="$HOME/.config/autostart"
-TALK2AI_DIR="$HOME/.talk2ai"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+SYSTEMD_DIR="$XDG_CONFIG_HOME/systemd/user"
+AUTOSTART_DIR="$XDG_CONFIG_HOME/autostart"
+TALK2AI_DIR="${TALK2AI_DIR:-$HOME/.talk2ai}"
+TTS_DATA_DIR="${TALK2AI_DATA_DIR:-$XDG_DATA_HOME/talk2ai}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -38,10 +46,7 @@ echo -e "${BOLD}╚════════════════════�
 step "0/7  Detener procesos existentes"
 
 systemctl --user stop talk2ai.service 2>/dev/null && ok "Servicio detenido" || true
-pkill -f "talk2ai-tray"  2>/dev/null && ok "Tray detenido"    || true
-pkill -f "talk2ai-keys"  2>/dev/null && ok "Keys detenido"    || true
-pkill -f "talk2ai-daemon" 2>/dev/null && ok "Daemon detenido" || true
-sleep 1
+systemctl --user stop talk2ai-tts.service 2>/dev/null && ok "Broker TTS detenido" || true
 rm -f "$TALK2AI_DIR/tray.lock" && true
 
 # ── Detectar gestor de paquetes ───────────────────────────────────────────────
@@ -169,7 +174,7 @@ fi
 
 step "4/7  Instalar scripts y drivers"
 
-mkdir -p "$BIN_DIR" "$TALK2AI_DIR/ia"
+mkdir -p "$BIN_DIR" "$TALK2AI_DIR/ia" "$TTS_DATA_DIR"
 
 SCRIPTS=(talk2ai-daemon talk2ai-handler talk2ai-tray talk2ai-keys talk2ai-control talk2ai-tts talk2ai-tts-kokoro)
 for s in "${SCRIPTS[@]}"; do
@@ -178,10 +183,12 @@ for s in "${SCRIPTS[@]}"; do
     ok "$s → $BIN_DIR/$s"
 done
 
-# Catálogo cerrado y manifiesto de hashes. Se conservan elecciones del usuario
-# y no se descarga ningún modelo ni runtime neuronal durante la instalación.
+# Catálogo cerrado y manifiesto de hashes: son datos versionados del programa,
+# no preferencias del usuario. Se actualizan en cada instalación; las
+# preferencias tts-engine, tts-voice y tts-speed permanecen intactas.
+# No se descarga ningún modelo ni runtime neuronal durante la instalación.
 for tts_config in tts-catalog.json tts-artifacts.json; do
-    [ -f "$TALK2AI_DIR/$tts_config" ] || cp "$REPO_DIR/config/$tts_config" "$TALK2AI_DIR/$tts_config"
+    install -m 0644 "$REPO_DIR/config/$tts_config" "$TTS_DATA_DIR/$tts_config"
 done
 [ -f "$TALK2AI_DIR/tts-engine" ] || echo "espeak-ng" > "$TALK2AI_DIR/tts-engine"
 [ -f "$TALK2AI_DIR/tts-voice" ] || echo "es" > "$TALK2AI_DIR/tts-voice"
@@ -211,7 +218,20 @@ mkdir -p "$SYSTEMD_DIR" "$AUTOSTART_DIR"
 
 cp "$REPO_DIR/config/talk2ai.service"      "$SYSTEMD_DIR/talk2ai.service"
 cp "$REPO_DIR/config/talk2ai-tts.service"  "$SYSTEMD_DIR/talk2ai-tts.service"
-cp "$REPO_DIR/config/talk2ai-tray.desktop" "$AUTOSTART_DIR/talk2ai-tray.desktop"
+# Desktop Entry does not support systemd's %h specifier.  Materialize the
+# current user's executable path at install time, with desktop-entry escaping
+# for the unusual but valid case of spaces in HOME.
+python3 - "$REPO_DIR/config/talk2ai-tray.desktop" "$AUTOSTART_DIR/talk2ai-tray.desktop" "$BIN_DIR/talk2ai-tray" <<'PYEOF'
+from pathlib import Path
+import sys
+
+template, destination, executable = map(Path, sys.argv[1:])
+escaped = str(executable).replace("\\", "\\\\").replace('"', '\\"')
+entry = template.read_text(encoding="utf-8").replace(
+    "Exec=talk2ai-tray", f'Exec="{escaped}"', 1
+)
+destination.write_text(entry, encoding="utf-8")
+PYEOF
 ok "talk2ai.service instalado"
 ok "talk2ai-tray.desktop instalado (autostart)"
 
@@ -223,16 +243,19 @@ fi
 
 systemctl --user daemon-reload
 systemctl --user enable talk2ai-tts.service talk2ai.service
-info "Iniciando servicio..."
+info "Iniciando servicios..."
+systemctl --user restart talk2ai-tts.service
 systemctl --user restart talk2ai.service
 sleep 2
 
-if systemctl --user is-active talk2ai.service &>/dev/null; then
-    ok "talk2ai.service activo y corriendo"
-else
-    err "El servicio no arrancó. Revisa:"
-    err "  journalctl --user -u talk2ai.service -n 30"
-fi
+for service in talk2ai-tts.service talk2ai.service; do
+    if systemctl --user is-active "$service" &>/dev/null; then
+        ok "$service activo y corriendo"
+    else
+        err "$service no arrancó. Revisa:"
+        err "  journalctl --user -u $service -n 30"
+    fi
+done
 
 # ── Contexto de personalidad (opcional) ──────────────────────────────────────
 
@@ -295,12 +318,14 @@ for driver_src in "$REPO_DIR/config/ia/"*; do
 done
 
 # Systemd
-if systemctl --user is-active talk2ai.service &>/dev/null; then
-    ok "talk2ai.service activo"
-else
-    err "talk2ai.service NO activo — revisa: journalctl --user -u talk2ai.service -n 30"
-    all_ok=false
-fi
+for service in talk2ai-tts.service talk2ai.service; do
+    if systemctl --user is-active "$service" &>/dev/null; then
+        ok "$service activo"
+    else
+        err "$service NO activo — revisa: journalctl --user -u $service -n 30"
+        all_ok=false
+    fi
+done
 
 # Lanzar tray
 if [[ -x "$BIN_DIR/talk2ai-tray" ]]; then

@@ -1,11 +1,11 @@
 # Modo Gemini: cambiar modo (luego usar Super+Space de Handy para grabar)
-"echo gemini > /tmp/handy-mode && notify-send 'Handy' '🤖 Modo Gemini' -t 1500"
+"mkdir -p \"${TALK2AI_DIR:-$HOME/.talk2ai}\" && printf '%s\\n' gemini > \"${TALK2AI_DIR:-$HOME/.talk2ai}/mode\" && notify-send 'talk2ai' '🤖 Modo Gemini' -t 1500"
   Mod1+Mod4+g
 
 # Modo Dictado: cambiar modo (luego usar Super+Space de Handy para grabar)
-"echo dictate > /tmp/handy-mode && notify-send 'Handy' '⌨️ Modo Dictado' -t 1500"
+"mkdir -p \"${TALK2AI_DIR:-$HOME/.talk2ai}\" && printf '%s\\n' dictate > \"${TALK2AI_DIR:-$HOME/.talk2ai}/mode\" && notify-send 'talk2ai' '⌨️ Modo Dictado' -t 1500"
   Mod1+Mod4+h
 
-# Detener síntesis, reproducción y cola TTS (incluye fallback de upgrades)
-"talk2ai-tts cancel >/dev/null 2>&1; pkill -f espeak-ng"
+# Detener síntesis, reproducción y cola del broker de este usuario.
+"talk2ai-tts cancel >/dev/null 2>&1"
   Control+Mod1+q

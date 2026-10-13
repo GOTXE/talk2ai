@@ -1,6 +1,8 @@
 import json
 import os
 import http.server
+import socket
+import stat
 import subprocess
 import tempfile
 import threading
@@ -20,6 +22,7 @@ class TtsBrokerTest(unittest.TestCase):
         self.runtime = root / "runtime"
         self.runtime.mkdir()
         self.state = root / "state"
+        self.data = root / "data"
         self.bin = root / "bin"
         self.bin.mkdir()
         self.log = root / "spoken.log"
@@ -31,6 +34,7 @@ class TtsBrokerTest(unittest.TestCase):
         )
         fake_espeak.chmod(0o755)
         self.env = {**os.environ, "TALK2AI_DIR": str(self.state),
+                    "TALK2AI_DATA_DIR": str(self.data),
                     "XDG_RUNTIME_DIR": str(self.runtime),
                     "TTS_TEST_LOG": str(self.log), "PATH": f"{self.bin}:{os.environ['PATH']}"}
         self.server = subprocess.Popen([str(TTS), "serve"], env=self.env,
@@ -81,9 +85,10 @@ class TtsBrokerTest(unittest.TestCase):
         self.assertNotEqual(selected.returncode, 0)
         self.assertIn("no seleccionable", selected.stderr)
 
-    def test_kokoro_voice_selection_is_persistent_and_independent(self):
-        # Availability is gated by both approved artifacts and the isolated
-        # runtime; this does not require loading a real model in CI.
+    def test_kokoro_is_not_advertised_without_a_real_validation(self):
+        # Files and a placeholder interpreter do not validate Spanish G2P,
+        # voice contents or actual playback.  Keep profiles unavailable until
+        # a genuine runtime validation exists.
         model_dir = self.state / "tts" / "kokoro"
         model_dir.mkdir(parents=True)
         (model_dir / "kokoro-v1.0.int8.onnx").write_bytes(b"fixture")
@@ -97,9 +102,45 @@ class TtsBrokerTest(unittest.TestCase):
                                ("kokoro-em-alex", "em_alex"),
                                ("kokoro-em-santa", "em_santa")):
             result = self.run_tts("select", profile)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual((self.state / "tts-voice").read_text().strip(), voice)
-        self.assertEqual((self.state / "tts-engine").read_text().strip(), "kokoro-onnx")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no seleccionable", result.stderr)
+        self.assertEqual((self.state / "tts-engine").read_text().strip(), "espeak-ng")
+
+    def test_protocol_handles_fragmentation_and_rejects_late_turn(self):
+        path = self.runtime / "talk2ai-tts.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(1)
+            client.connect(str(path))
+            client.sendall(b'{"command":"status"}')
+            # No delimiter means no request, even if recv boundaries change.
+            client.sendall(b'\n')
+            reply = client.makefile("rb").readline()
+        self.assertTrue(json.loads(reply)["ok"])
+
+        generation = int((self.state / "tts-cancel-generation").read_text())
+        self.assertEqual(self.run_tts("cancel").returncode, 0)
+        late = self.run_tts("speak", "--generation", str(generation), input_text="no debe sonar")
+        self.assertNotEqual(late.returncode, 0)
+        self.assertIn("cancelado", late.stderr)
+
+    def test_socket_is_private_and_espeak_rejects_kokoro_speed_units(self):
+        socket_path = self.runtime / "talk2ai-tts.sock"
+        self.assertEqual(stat.S_IMODE(socket_path.stat().st_mode), 0o600)
+        # A stale neural multiplier must not become eSpeak's 1 WPM.
+        (self.state / "tts-speed").write_text("1.0\n")
+        self.assertEqual(self.run_tts("speak", input_text="velocidad segura").returncode, 0)
+        for _ in range(50):
+            if self.log.exists():
+                break
+            time.sleep(0.02)
+        self.assertIn("-s 140", self.log.read_text())
+
+    def test_speed_is_validated_in_engine_specific_units_and_persisted(self):
+        self.assertEqual(self.run_tts("speed", "180").returncode, 0)
+        self.assertEqual((self.state / "tts-speed").read_text().strip(), "180")
+        rejected = self.run_tts("speed", "1.0")
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("fuera de rango", rejected.stderr)
 
     def test_optional_model_is_not_downloaded_without_confirmation(self):
         result = self.run_tts("download", "kokoro-ef-dora")
@@ -120,7 +161,7 @@ class TtsBrokerTest(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            manifest_path = self.state / "tts-artifacts.json"
+            manifest_path = self.data / "tts-artifacts.json"
             manifest = json.loads(manifest_path.read_text())
             url = f"http://127.0.0.1:{server.server_port}/artifact.bin"
             for key in ("model", "voices"):
@@ -140,6 +181,28 @@ class TtsBrokerTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         time.sleep(0.1)
         self.assertFalse(marker.exists())
+
+
+class DistributedFilesTest(unittest.TestCase):
+    def test_no_developer_paths_or_legacy_state_paths_are_distributed(self):
+        forbidden = ("/home/gtx", "Documentos/Prog_Local/handy-gemini-tts", "/tmp/handy-mode")
+        # Tests may deliberately name forbidden values as fixtures; inspect
+        # only files shipped to users so the guard has no self false-positive.
+        for relative in ("config", "scripts", "install.sh", "README.md", "docs"):
+            path = REPO / relative
+            files = [path] if path.is_file() else [item for item in path.rglob("*") if item.is_file()]
+            for item in files:
+                if item.suffix in {".gif", ".webm", ".png", ".svg"}:
+                    continue
+                content = item.read_text(encoding="utf-8", errors="ignore")
+                for value in forbidden:
+                    self.assertNotIn(value, content, f"{value} en {item.relative_to(REPO)}")
+
+    def test_kokoro_uses_spanish_phonemes_not_legacy_language_alias(self):
+        worker = (REPO / "scripts" / "talk2ai-tts-kokoro").read_text(encoding="utf-8")
+        self.assertIn('EspeakG2P(language="es")', worker)
+        self.assertIn("is_phonemes=True", worker)
+        self.assertNotIn('lang="e"', worker)
 
 
 if __name__ == "__main__":

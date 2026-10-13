@@ -25,13 +25,22 @@ import urllib.request
 from pathlib import Path
 
 MAX_TEXT = 12000
+# Requests and replies are newline-delimited JSON.  Keep the protocol bounded
+# so a peer cannot make the broker retain an unbounded partial message.
+MAX_MESSAGE = MAX_TEXT + 2048
 TEST_PHRASE = "Hola. Esta es una prueba de voz de talk2ai."
 ROOT = Path(os.environ.get("TALK2AI_DIR", Path.home() / ".talk2ai"))
-RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+_xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
+# A user service normally supplies XDG_RUNTIME_DIR.  A private state fallback
+# keeps command-line use portable on systems that do not.
+RUNTIME = Path(_xdg_runtime) if _xdg_runtime else ROOT / "runtime"
 SOCKET = RUNTIME / "talk2ai-tts.sock"
-REPO = Path(__file__).resolve().parent.parent
-CATALOG = ROOT / "tts-catalog.json"
-ARTIFACTS = ROOT / "tts-artifacts.json"
+DATA_ROOT = Path(os.environ.get(
+    "TALK2AI_DATA_DIR",
+    Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "talk2ai",
+))
+CATALOG = DATA_ROOT / "tts-catalog.json"
+ARTIFACTS = DATA_ROOT / "tts-artifacts.json"
 
 
 def atomic_write(path: Path, value: str) -> None:
@@ -44,11 +53,23 @@ def atomic_write(path: Path, value: str) -> None:
 
 def bootstrap() -> None:
     ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(ROOT, 0o700)
+    RUNTIME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(RUNTIME, 0o700)
     (ROOT / "tts" / "tmp").mkdir(mode=0o700, parents=True, exist_ok=True)
-    for source, destination in ((REPO / "config" / "tts-catalog.json", CATALOG),
-                                (REPO / "config" / "tts-artifacts.json", ARTIFACTS)):
-        if not destination.exists() and source.exists():
+    DATA_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(DATA_ROOT, 0o700)
+    # install.sh always puts versioned catalog data in DATA_ROOT.  Retaining a
+    # source-tree fallback keeps direct checkout execution useful for tests;
+    # an installed script in ~/.local/bin never depends on a cloned repo.
+    source_config = Path(__file__).resolve().parent.parent / "config"
+    for name, destination in (("tts-catalog.json", CATALOG),
+                              ("tts-artifacts.json", ARTIFACTS)):
+        source = source_config / name
+        if not destination.exists() and source.is_file():
             shutil.copyfile(source, destination)
+        if not destination.is_file():
+            raise RuntimeError(f"falta {name}; reinstala talk2ai para desplegar sus datos")
     # Existing installations only gain independent defaults; AI state is not touched.
     if not (ROOT / "tts-engine").exists():
         atomic_write(ROOT / "tts-engine", "espeak-ng\n")
@@ -92,7 +113,19 @@ def kokoro_ready() -> tuple[bool, str]:
         return False, "modelo y voces no instalados (descarga explícita requerida)"
     if not runtime.is_file():
         return False, "runtime aislado no instalado"
-    return True, "instalado"
+    # A file named python is not a runtime.  Probe the isolated interpreter
+    # without loading a model, so selection never advertises a broken venv.
+    try:
+        probe = subprocess.run(
+            [str(runtime), "-c", "import kokoro_onnx, misaki"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, "runtime Kokoro no se puede ejecutar"
+    if probe.returncode:
+        return False, "runtime Kokoro incompleto (requiere kokoro-onnx y misaki)"
+    return False, "Kokoro pendiente de una prueba real de voces españolas"
 
 
 def availability(profile: dict) -> tuple[bool, str]:
@@ -120,6 +153,30 @@ def safe_text(text: str) -> str:
     return text.strip()
 
 
+def engine_speed(profile: dict, value: str) -> int | float:
+    """Validate a persisted speed in the units used by this engine.
+
+    eSpeak words-per-minute and Kokoro's multiplier are intentionally never
+    interchangeable.  Old preferences are tolerated by falling back to the
+    profile default rather than passing a nonsense value to an engine.
+    """
+    engine = profile["engine"]
+    default = profile["default_speed"]
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = float(default)
+    if engine == "espeak-ng":
+        if not 80 <= parsed <= 450 or not parsed.is_integer():
+            return int(default)
+        return int(parsed)
+    if engine == "kokoro-onnx":
+        if not 0.5 <= parsed <= 2.0:
+            return float(default)
+        return round(parsed, 2)
+    return default
+
+
 class Broker:
     def __init__(self) -> None:
         self.requests: queue.Queue[tuple[str, dict]] = queue.Queue()
@@ -128,6 +185,7 @@ class Broker:
         self.active: subprocess.Popen | None = None
         self.kokoro: subprocess.Popen | None = None
         self.generation = 0
+        atomic_write(ROOT / "tts-cancel-generation", "0\n")
         self.thread = threading.Thread(target=self.playback, daemon=True)
 
     def start(self) -> None:
@@ -148,10 +206,24 @@ class Broker:
     def handle(self, connection: socket.socket) -> None:
         with connection:
             try:
-                payload = connection.recv(MAX_TEXT + 1024).decode("utf-8")
+                if hasattr(socket, "SO_PEERCRED"):
+                    credentials = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+                    peer_uid = int.from_bytes(credentials[4:8], sys.byteorder)
+                    if peer_uid != os.getuid():
+                        raise PermissionError("cliente de otro usuario rechazado")
+                stream = connection.makefile("rb")
+                raw = stream.readline(MAX_MESSAGE + 1)
+                if not raw.endswith(b"\n"):
+                    raise ValueError("mensaje TTS sin delimitador o demasiado grande")
+                if len(raw) > MAX_MESSAGE:
+                    raise ValueError("mensaje TTS demasiado grande")
+                payload = raw.decode("utf-8")
                 request = json.loads(payload)
                 command = request.get("command")
                 if command == "speak":
+                    supplied_generation = request.get("generation")
+                    if supplied_generation is not None and supplied_generation != self.generation:
+                        raise RuntimeError("turno TTS cancelado")
                     requested = request.get("profile")
                     profile = profile_by_id(requested) if requested else current_profile()
                     if not profile:
@@ -167,7 +239,7 @@ class Broker:
                     result = {"ok": False, "error": "comando no permitido"}
             except Exception as exc:
                 result = {"ok": False, "error": str(exc)}
-            connection.sendall(json.dumps(result).encode("utf-8"))
+            connection.sendall((json.dumps(result, ensure_ascii=False) + "\n").encode("utf-8"))
 
     def cancel(self) -> None:
         with self.lock:
@@ -187,6 +259,9 @@ class Broker:
             self.active = None
             self.kokoro = None
         atomic_write(ROOT / "tts-state", "cancelled\n")
+        # The daemon snapshots this monotonic token before starting a streamed
+        # answer.  It then cannot enqueue late fragments after Ctrl+Alt+Q.
+        atomic_write(ROOT / "tts-cancel-generation", str(self.generation) + "\n")
 
     @staticmethod
     def _kill_if_needed(process: subprocess.Popen) -> None:
@@ -239,7 +314,7 @@ class Broker:
             raise RuntimeError(reason)
         if profile["engine"] == "espeak-ng":
             # Preserve the established Spanish Retro synthesis parameters.
-            speed = int(float(read_pref("tts-speed", "140")))
+            speed = engine_speed(profile, read_pref("tts-speed", "140"))
             # Keep the historical Stephen Hawking language hint, but never let
             # streamed AI text become arbitrary SSML.
             safe_ssml = html.escape(text).replace(
@@ -267,7 +342,7 @@ class Broker:
             worker = self.kokoro
             assert worker.stdin and worker.stdout
             worker.stdin.write(json.dumps({"text": text, "voice": profile["voice"],
-                                           "speed": profile["default_speed"]}) + "\n")
+                                           "speed": engine_speed(profile, read_pref("tts-speed", "1.0"))}) + "\n")
             worker.stdin.flush()
         line = worker.stdout.readline()
         if generation != self.generation:
@@ -283,8 +358,14 @@ def send(request: dict) -> dict:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(2)
             client.connect(str(SOCKET))
-            client.sendall(json.dumps(request).encode("utf-8"))
-            return json.loads(client.recv(8192).decode("utf-8"))
+            client.sendall((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
+            reply = client.makefile("rb").readline(MAX_MESSAGE + 1)
+            if not reply.endswith(b"\n") or len(reply) > MAX_MESSAGE:
+                raise RuntimeError("respuesta TTS inválida")
+            result = json.loads(reply.decode("utf-8"))
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error", "el broker rechazó la solicitud"))
+            return result
     except OSError as exc:
         raise RuntimeError("el servicio TTS no está activo") from exc
 
@@ -336,6 +417,15 @@ def choose(profile_id: str) -> None:
     atomic_write(ROOT / "tts-speed", str(profile["default_speed"]) + "\n")
 
 
+def set_speed(value: float) -> None:
+    profile = current_profile()
+    normalized = engine_speed(profile, str(value))
+    if float(normalized) != value:
+        unit = "ppm" if profile["engine"] == "espeak-ng" else "multiplicador"
+        raise RuntimeError(f"velocidad fuera de rango para {profile['engine']} ({unit})")
+    atomic_write(ROOT / "tts-speed", str(normalized) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="talk2ai TTS closed-catalog broker")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -344,7 +434,13 @@ def main() -> int:
     listing.add_argument("--json", action="store_true")
     select = sub.add_parser("select")
     select.add_argument("profile")
+    speed = sub.add_parser("speed")
+    speed.add_argument("value", type=float)
     sub.add_parser("speak")
+    # Daemons streaming a response attach the cancellation epoch they observed
+    # at the start of the turn.  Standalone clients intentionally omit it.
+    parser_speak = sub.choices["speak"]
+    parser_speak.add_argument("--generation", type=int)
     test = sub.add_parser("test")
     test.add_argument("profile")
     download = sub.add_parser("download")
@@ -366,10 +462,15 @@ def main() -> int:
                     print(f"{item['id']}\t{'available' if item['available'] else 'unavailable'}\t{item['availability_reason']}")
         elif args.command == "select":
             choose(args.profile)
+        elif args.command == "speed":
+            set_speed(args.value)
         elif args.command == "download":
             download_kokoro(args.confirm)
         elif args.command == "speak":
-            print(json.dumps(send({"command": "speak", "text": sys.stdin.read()}), ensure_ascii=False))
+            request = {"command": "speak", "text": sys.stdin.read()}
+            if args.generation is not None:
+                request["generation"] = args.generation
+            print(json.dumps(send(request), ensure_ascii=False))
         elif args.command == "test":
             profile = profile_by_id(args.profile)
             if not profile:

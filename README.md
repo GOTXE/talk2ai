@@ -57,7 +57,7 @@ El modo persiste hasta que lo cambias. Puedes alternar entre ambos en cualquier 
 - **Wayland y X11** — `ydotool` en Wayland, `xdotool` en X11
 - **Autostart** — servicio systemd + desktop entry para arrancar con la sesión
 
-> **Nota:** en modo IA la consulta viaja a los servidores del proveedor del driver activo (a menos que uses un driver local como Ollama). El audio se sintetiza localmente: eSpeak-ng Retro es el valor por defecto y fallback; Kokoro sólo se activa tras una instalación explícita y verificada.
+> **Nota:** en modo IA la consulta viaja a los servidores del proveedor del driver activo (a menos que uses un driver local como Ollama). El audio se sintetiza localmente: eSpeak-ng Retro es el valor por defecto y fallback. Kokoro permanece no seleccionable hasta completar validación real de runtime, voces españolas y reproducción.
 
 ## Voz / TTS
 
@@ -67,19 +67,24 @@ frase fija sin consultar al LLM. Las preferencias se guardan en
 `~/.talk2ai/tts-engine`, `tts-voice` y `tts-speed`.
 
 eSpeak-ng Retro (`es`, velocidad 140, tono 40) funciona sin modelos y es el
-fallback. Las voces Kokoro `ef_dora`, `em_alex` y `em_santa` requieren una
-descarga consciente y con SHA-256:
+fallback. El manifiesto permite descargar conscientemente y con SHA-256 los
+artefactos Kokoro, pero las voces `ef_dora`, `em_alex` y `em_santa` **no se
+anuncian como disponibles ni se pueden seleccionar** hasta una validación real:
 
 ```bash
 talk2ai-tts download kokoro-ef-dora --confirm
 talk2ai-tts list
 ```
 
-El catálogo no instala ni descarga modelos durante `install.sh`. Piper y sus
+El catálogo no instala ni descarga modelos durante `install.sh`. Sus archivos
+versionados se despliegan y actualizan en `${XDG_DATA_HOME:-~/.local/share}/talk2ai/`;
+las preferencias y el estado existentes permanecen en `~/.talk2ai/`. Piper y sus
 voces permanecen visibles sólo como bloqueadas: no se activan ni descargan.
 El runtime Python de Kokoro se mantiene en `~/.talk2ai/tts-venv`; la instalación
 automática sigue bloqueada hasta publicar un lock transitorio por plataforma
-que esté revisado íntegramente.
+que esté revisado íntegramente. La velocidad se elige desde el tray y se guarda
+por usuario; eSpeak usa palabras por minuto y Kokoro multiplicadores, sin
+mezclar unidades.
 
 ## Requisitos
 
