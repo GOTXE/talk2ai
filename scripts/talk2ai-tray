@@ -41,6 +41,8 @@ TTS_ENGINE_FILE    = TALK2AI_DIR / "tts-engine"
 TTS_VOICE_FILE     = TALK2AI_DIR / "tts-voice"
 TTS_SPEED_FILE     = TALK2AI_DIR / "tts-speed"
 TTS_BIN            = "talk2ai-tts"
+TTS_DATA_DIR       = Path(os.environ.get("TALK2AI_DATA_DIR", str(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "talk2ai")))
+TTS_ARTIFACTS_FILE = TTS_DATA_DIR / "tts-artifacts.json"
 SERVICE            = "talk2ai.service"
 GITHUB_API_LATEST  = "https://api.github.com/repos/GOTXE/talk2ai/releases/latest"
 GITHUB_RELEASES    = "https://github.com/GOTXE/talk2ai/releases"
@@ -203,15 +205,11 @@ def make_icon(mode, driver, all_ok, beat_scale=1.0):
         p.setFont(font)
         p.drawText(1, 1, 46, 46, Qt.AlignmentFlag.AlignCenter, "H")
     elif driver == "gemini":
-        # Neutral, project-drawn marker: do not reuse a provider logo.
-        p.setBrush(QBrush(QColor("#274690")))
+        # Restore the Gemini star marker for the active Gemini driver.
+        p.setBrush(QBrush(QColor("#202124")))
         p.drawEllipse(1, 1, 46, 46)
         p.setClipping(False)
-        p.setPen(QColor("white"))
-        font = QFont("Sans Serif", 20)
-        font.setBold(True)
-        p.setFont(font)
-        p.drawText(1, 1, 46, 46, Qt.AlignmentFlag.AlignCenter, "G")
+        _gemini_renderer().render(p, QRectF(8, 8, 32, 32))
     elif driver == "ollama":
         # Neutral, project-drawn marker: do not reuse a provider logo.
         p.setBrush(QBrush(QColor("#404040")))
@@ -393,6 +391,10 @@ class UpdateSignal(QObject):
     result = pyqtSignal(str, str)
 
 
+class TtsDownloadSignal(QObject):
+    finished = pyqtSignal(bool, str)
+
+
 
 class TalkTray:
     def __init__(self, app):
@@ -407,6 +409,8 @@ class TalkTray:
         self._ollama_models_cache = None
         self._update_signal = UpdateSignal()
         self._update_signal.result.connect(self._on_update_result)
+        self._tts_download_signal = TtsDownloadSignal()
+        self._tts_download_signal.finished.connect(self._on_tts_download_finished)
         self._build_menu()
         self.tray.setIcon(make_icon(get_mode(), get_driver(), False))
         self.tray.setContextMenu(self.menu)
@@ -670,6 +674,23 @@ class TalkTray:
                 action.setEnabled(False)
                 reason = self._tts_menu.addAction(f"    {profile['availability_reason']}")
                 reason.setEnabled(False)
+                if profile.get("status") == "optional":
+                    info = self._tts_download_info(profile)
+                    if info:
+                        download = self._tts_menu.addAction(
+                            f"    ⬇ Descargar modelos ({info['total']})"
+                        )
+                        download.triggered.connect(
+                            lambda checked=False, ident=profile["id"]: self._download_tts(ident)
+                        )
+                        details = self._tts_menu.addAction(
+                            f"    {info['files']} · {info['license']} · voces: {info['voices']}"
+                        )
+                        details.setEnabled(False)
+                        runtime = self._tts_menu.addAction(
+                            "    Runtime kokoro-onnx: instalación auditada pendiente"
+                        )
+                        runtime.setEnabled(False)
         selected_profile = next((p for p in profiles if p["engine"] == engine and p["voice"] == voice), None)
         if selected_profile:
             self._tts_menu.addSeparator()
@@ -694,6 +715,68 @@ class TalkTray:
         # Fixed text and a direct broker request: no LLM consultation.
         subprocess.Popen([TTS_BIN, "test", profile_id], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL)
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        size = float(size_bytes)
+        for unit in ("B", "KiB", "MiB", "GiB"):
+            if size < 1024 or unit == "GiB":
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+            size /= 1024
+
+    def _tts_download_info(self, profile: dict):
+        if profile.get("engine") != "kokoro-onnx":
+            return None
+        try:
+            manifest = json.loads(TTS_ARTIFACTS_FILE.read_text(encoding="utf-8"))["kokoro"]
+            model = manifest["model"]
+            voices = manifest["voices"]
+            total = int(model["size_bytes"]) + int(voices["size_bytes"])
+            return {
+                "total": self._format_size(total),
+                "files": f"modelo {self._format_size(int(model['size_bytes']))} + voces {self._format_size(int(voices['size_bytes']))}",
+                "license": voices.get("license", "licencia no indicada"),
+                "voices": ", ".join(voices.get("contains", [])),
+            }
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _download_tts(self, profile_id: str):
+        profile_label = profile_id.replace("kokoro-", "").replace("-", " ")
+        info = self._tts_download_info({"id": profile_id, "engine": "kokoro-onnx"})
+        size = info["total"] if info else "tamaño desconocido"
+        answer = QMessageBox.question(
+            None,
+            "Descargar voz Kokoro",
+            f"Se descargará el paquete Kokoro ({size}) para {profile_label}.\n\n"
+            "Incluye el modelo y las voces Dora, Alex y Santa.\n"
+            "La descarga se verificará mediante SHA-256.\n\n"
+            "El runtime kokoro-onnx se instala por separado cuando exista un lock auditado.\n\n"
+            "¿Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        def worker():
+            try:
+                completed = subprocess.run(
+                    [TTS_BIN, "download", profile_id, "--confirm"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                output = (completed.stdout or completed.stderr).strip()
+                self._tts_download_signal.finished.emit(completed.returncode == 0, output)
+            except Exception as exc:
+                self._tts_download_signal.finished.emit(False, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_tts_download_finished(self, success: bool, message: str):
+        title = "Kokoro descargado" if success else "Error descargando Kokoro"
+        self.tray.showMessage(title, message or "Revisa el registro del servicio TTS.",
+                              QSystemTrayIcon.MessageIcon.Information if success else
+                              QSystemTrayIcon.MessageIcon.Critical, 8000)
 
     def _get_ollama_host(self) -> str:
         try:
